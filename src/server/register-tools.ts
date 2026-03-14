@@ -13,13 +13,14 @@ import {
   type YouTubeSearchPage,
   type YouTubeSearchResult,
   type YouTubeSearchQuery,
+  type YouTubeVideoRecord,
   type YouTubeService
 } from "../youtube/contracts.js";
 import { createYouTubeService } from "../youtube/service.js";
 import { SERVER_INFO } from "./create-server.js";
 
 export type RegisterToolDependencies = {
-  youtubeService?: Pick<YouTubeService, "searchVideos">;
+  youtubeService?: Partial<Pick<YouTubeService, "getVideo" | "searchVideos">>;
 };
 
 const searchFeatureSchema = z.enum([
@@ -48,12 +49,23 @@ const searchVideosInputSchema = z
     filters: searchFiltersSchema.optional()
   })
   .strict();
+const getVideoDetailsInputSchema = z
+  .object({
+    video: z.string().trim().min(1).max(500)
+  })
+  .strict();
 
 export function registerTools(
   _server: McpServer,
   dependencies: RegisterToolDependencies = {}
 ): void {
-  const youtubeService = dependencies.youtubeService ?? createYouTubeService();
+  const defaultYouTubeService =
+    dependencies.youtubeService?.getVideo && dependencies.youtubeService?.searchVideos
+      ? undefined
+      : createYouTubeService();
+  const searchVideos =
+    dependencies.youtubeService?.searchVideos ?? defaultYouTubeService?.searchVideos;
+  const getVideo = dependencies.youtubeService?.getVideo ?? defaultYouTubeService?.getVideo;
 
   _server.registerTool(
     "server_status",
@@ -90,6 +102,40 @@ export function registerTools(
   );
 
   _server.registerTool(
+    "get_video_details",
+    {
+      description:
+        "Fetch compact details for a public YouTube video from a canonical URL or bare 11-character ID.",
+      inputSchema: getVideoDetailsInputSchema.shape,
+      annotations: {
+        readOnlyHint: true
+      }
+    },
+    async args => {
+      try {
+        if (!getVideo) {
+          throw new NotAvailableError(
+            "Video detail lookups are not configured for this ytcp build.",
+            {
+              cause: "video_lookup_unconfigured"
+            }
+          );
+        }
+
+        const input = parseGetVideoDetailsInput(args);
+        const record = await getVideo(input);
+
+        return createSuccessResult({
+          summary: summarizeVideoRecord(record),
+          data: shapeVideoRecordData(record)
+        });
+      } catch (error) {
+        return createResultFromError(error);
+      }
+    }
+  );
+
+  _server.registerTool(
     "search_videos",
     {
       description:
@@ -101,9 +147,15 @@ export function registerTools(
     },
     async args => {
       try {
+        if (!searchVideos) {
+          throw new NotAvailableError("Public YouTube search is not configured for this ytcp build.", {
+            cause: "search_unconfigured"
+          });
+        }
+
         const input = parseSearchVideosInput(args);
 
-        const page = await youtubeService.searchVideos(input);
+        const page = await searchVideos(input);
 
         return createSuccessResult({
           summary: summarizeSearchPage(page),
@@ -114,6 +166,18 @@ export function registerTools(
       }
     }
   );
+}
+
+function parseGetVideoDetailsInput(input: unknown): string {
+  const parsed = getVideoDetailsInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    throw new InvalidInputError(
+      "Provide a YouTube video URL or bare 11-character video ID in `video`."
+    );
+  }
+
+  return parsed.data.video.trim();
 }
 
 function parseSearchVideosInput(input: unknown): YouTubeSearchQuery {
@@ -222,6 +286,14 @@ function summarizeSearchPage(page: YouTubeSearchPage): string {
   } for "${page.query}".${page.nextPageToken ? " More are available." : ""}`;
 }
 
+function summarizeVideoRecord(record: YouTubeVideoRecord): string {
+  if (record.title) {
+    return `Loaded public video details for "${record.title}".`;
+  }
+
+  return `Loaded public video details for ${record.id}.`;
+}
+
 function shapeSearchPageData(page: YouTubeSearchPage): Record<string, unknown> {
   return {
     query: page.query,
@@ -231,6 +303,29 @@ function shapeSearchPageData(page: YouTubeSearchPage): Record<string, unknown> {
       : {}),
     ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}),
     results: page.results.map(shapeSearchResultData)
+  };
+}
+
+function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    canonicalUrl: record.canonicalUrl,
+    ...(record.title ? { title: record.title } : {}),
+    ...(record.description ? { description: record.description } : {}),
+    ...(record.channelTitle ? { channelTitle: record.channelTitle } : {}),
+    ...(typeof record.durationSeconds === "number"
+      ? { durationSeconds: record.durationSeconds }
+      : {}),
+    ...(typeof record.viewCount === "number" ? { viewCount: record.viewCount } : {}),
+    ...(typeof record.likeCount === "number" ? { likeCount: record.likeCount } : {}),
+    ...(record.thumbnails.length > 0 ? { thumbnails: record.thumbnails } : {}),
+    ...(record.keywords && record.keywords.length > 0 ? { keywords: record.keywords } : {}),
+    ...(typeof record.isLive === "boolean" ? { isLive: record.isLive } : {}),
+    ...(typeof record.isUpcoming === "boolean" ? { isUpcoming: record.isUpcoming } : {}),
+    ...(record.playlistId ? { playlistId: record.playlistId } : {}),
+    ...(typeof record.startTimeSeconds === "number"
+      ? { startTimeSeconds: record.startTimeSeconds }
+      : {})
   };
 }
 
