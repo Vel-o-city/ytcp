@@ -19,11 +19,16 @@ import {
   type InnertubeClientHandle,
   type InnertubeClientLike
 } from "./client.js";
+import { createYouTubeCache, type YouTubeCache } from "./cache.js";
 import {
   normalizeChannelRecord,
   normalizePlaylistRecord,
   normalizeVideoRecord
 } from "./normalize.js";
+import {
+  createYouTubeRequestPolicy,
+  type YouTubeRequestPolicy
+} from "./policies.js";
 import { parseYouTubeInput } from "./parser.js";
 import type { ParsedYouTubeReference } from "./reference.js";
 
@@ -31,6 +36,8 @@ export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   client?: InnertubeClientHandle;
   logger?: Logger;
   parser?: (input: string) => ParsedYouTubeReference;
+  policy?: YouTubeRequestPolicy;
+  youtubeCache?: YouTubeCache;
 };
 
 export function createYouTubeService(
@@ -38,24 +45,54 @@ export function createYouTubeService(
 ): YouTubeService {
   const logger = options.logger ?? createLogger({ name: "ytcp.youtube.service" });
   const parser = options.parser ?? parseYouTubeInput;
-  const client = options.client ?? createInnertubeClient(options);
+  const youtubeCache = options.youtubeCache ?? createYouTubeCache();
+  const policy = options.policy ?? createYouTubeRequestPolicy();
+  const client =
+    options.client ??
+    createInnertubeClient({
+      ...options,
+      youtubeCache
+    });
 
   return {
     parseInput: parser,
     getVideo: async (input: YouTubeVideoInput): Promise<YouTubeVideoRecord> => {
       const reference = expectReferenceKind(input, parser, "video");
+      const cacheKey = createCacheKey(reference);
+      const cached = youtubeCache.getLookup<YouTubeVideoRecord>(cacheKey);
+
+      if (cached) {
+        logger.debug("youtube video cache hit", { id: reference.id });
+        return cached;
+      }
+
       const upstream = await client.getClient();
 
       logger.debug("fetching youtube video", { id: reference.id, source: reference.source });
 
-      const response = await upstream.getBasicInfo(reference.id);
+      const response = await policy.execute(
+        () => upstream.getBasicInfo(reference.id),
+        {
+          label: "video lookup",
+          target: reference.id
+        }
+      );
+      const record = normalizeVideoRecord(response, reference);
 
-      return normalizeVideoRecord(response, reference);
+      return youtubeCache.setLookup(cacheKey, record);
     },
     getPlaylist: async (
       input: YouTubePlaylistInput
     ): Promise<YouTubePlaylistRecord> => {
       const reference = expectReferenceKind(input, parser, "playlist");
+      const cacheKey = createCacheKey(reference);
+      const cached = youtubeCache.getLookup<YouTubePlaylistRecord>(cacheKey);
+
+      if (cached) {
+        logger.debug("youtube playlist cache hit", { id: reference.id });
+        return cached;
+      }
+
       const upstream = await client.getClient();
 
       logger.debug("fetching youtube playlist", {
@@ -63,25 +100,46 @@ export function createYouTubeService(
         source: reference.source
       });
 
-      const response = await upstream.getPlaylist(reference.id);
+      const response = await policy.execute(
+        () => upstream.getPlaylist(reference.id),
+        {
+          label: "playlist lookup",
+          target: reference.id
+        }
+      );
+      const record = normalizePlaylistRecord(response, reference);
 
-      return normalizePlaylistRecord(response, reference);
+      return youtubeCache.setLookup(cacheKey, record);
     },
     getChannel: async (
       input: YouTubeChannelInput
     ): Promise<YouTubeChannelRecord> => {
       const reference = expectReferenceKind(input, parser, "channel");
+      const cacheKey = createCacheKey(reference);
+      const cached = youtubeCache.getLookup<YouTubeChannelRecord>(cacheKey);
+
+      if (cached) {
+        logger.debug("youtube channel cache hit", {
+          target: reference.channelId ?? reference.handle ?? reference.canonicalUrl
+        });
+        return cached;
+      }
+
       const upstream = await client.getClient();
-      const target = await resolveChannelTarget(upstream, reference);
+      const target = await resolveChannelTarget(upstream, reference, policy, logger);
 
       logger.debug("fetching youtube channel", {
         target,
         source: reference.source
       });
 
-      const response = await upstream.getChannel(target);
+      const response = await policy.execute(() => upstream.getChannel(target), {
+        label: "channel lookup",
+        target
+      });
+      const record = normalizeChannelRecord(response, reference);
 
-      return normalizeChannelRecord(response, reference);
+      return youtubeCache.setLookup(cacheKey, record);
     }
   };
 }
@@ -104,18 +162,33 @@ function expectReferenceKind<TKind extends ParsedYouTubeReference["kind"]>(
 
 async function resolveChannelTarget(
   client: InnertubeClientLike,
-  reference: YouTubeChannelLookup
+  reference: YouTubeChannelLookup,
+  policy: YouTubeRequestPolicy,
+  logger: Logger
 ): Promise<string> {
   if (reference.channelId) {
     return reference.channelId;
   }
 
   if (client.resolveURL) {
-    const endpoint = await client.resolveURL(reference.canonicalUrl);
-    const browseId = extractBrowseId(endpoint);
+    try {
+      const endpoint = await policy.execute(
+        () => client.resolveURL!(reference.canonicalUrl),
+        {
+          label: "channel resolution",
+          target: reference.canonicalUrl
+        }
+      );
+      const browseId = extractBrowseId(endpoint);
 
-    if (browseId) {
-      return browseId;
+      if (browseId) {
+        return browseId;
+      }
+    } catch (error) {
+      logger.warn("youtube channel resolution fell back to direct target", {
+        error: error instanceof Error ? error.message : String(error),
+        target: reference.canonicalUrl
+      });
     }
   }
 
@@ -147,4 +220,15 @@ function extractBrowseId(value: unknown): string | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function createCacheKey(reference: ParsedYouTubeReference): string {
+  switch (reference.kind) {
+    case "video":
+      return `video:${reference.id}:playlist=${reference.playlistId ?? ""}:start=${reference.startTimeSeconds ?? ""}`;
+    case "playlist":
+      return `playlist:${reference.id}`;
+    case "channel":
+      return `channel:${reference.channelId ?? reference.handle ?? reference.customName ?? reference.username ?? reference.canonicalUrl}`;
+  }
 }

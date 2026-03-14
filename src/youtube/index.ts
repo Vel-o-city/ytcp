@@ -23,6 +23,11 @@ export {
   type YouTubeVideoRecord
 } from "./contracts.js";
 export {
+  createYouTubeCache,
+  type CreateYouTubeCacheOptions,
+  type YouTubeCache
+} from "./cache.js";
+export {
   createInnertubeClient,
   type CreateInnertubeClientOptions,
   type InnertubeClientHandle,
@@ -34,6 +39,12 @@ export {
   normalizeVideoRecord
 } from "./normalize.js";
 export { normalizeYouTubeUrl, parseYouTubeInput } from "./parser.js";
+export {
+  createYouTubeRequestPolicy,
+  shouldRetryYouTubeError,
+  type CreateYouTubeRequestPolicyOptions,
+  type YouTubeRequestPolicy
+} from "./policies.js";
 export {
   createYouTubeService,
   type CreateYouTubeServiceOptions

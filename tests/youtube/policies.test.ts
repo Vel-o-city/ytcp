@@ -7,6 +7,7 @@ import {
 } from "../../src/lib/mcp-errors.js";
 import { createInnertubeClient } from "../../src/youtube/client.js";
 import { createYouTubeCache } from "../../src/youtube/cache.js";
+import { createYouTubeService } from "../../src/youtube/service.js";
 import {
   createYouTubeRequestPolicy,
   shouldRetryYouTubeError
@@ -135,5 +136,69 @@ describe("client cache wiring", () => {
         cache: youtubeCache.session
       })
     );
+  });
+});
+
+describe("service policy and cache integration", () => {
+  it("caches normalized lookups so repeated video requests avoid duplicate upstream calls", async () => {
+    const youtubeCache = createYouTubeCache();
+    const upstream = {
+      getBasicInfo: vi.fn().mockResolvedValue({
+        basic_info: {
+          title: "Never Gonna Give You Up"
+        }
+      }),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger(),
+      youtubeCache,
+      policy: createYouTubeRequestPolicy({
+        retries: 0,
+        timeoutMs: 100,
+        sleep: vi.fn().mockResolvedValue(undefined)
+      })
+    });
+
+    await service.getVideo("dQw4w9WgXcQ");
+    await service.getVideo("dQw4w9WgXcQ");
+
+    expect(upstream.getBasicInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces retry exhaustion as a typed upstream error from the service layer", async () => {
+    const upstream = {
+      getBasicInfo: vi
+        .fn()
+        .mockRejectedValue({ status: 503, message: "Service Unavailable" }),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger(),
+      policy: createYouTubeRequestPolicy({
+        retries: 1,
+        timeoutMs: 100,
+        sleep: vi.fn().mockResolvedValue(undefined)
+      })
+    });
+
+    await expect(service.getVideo("dQw4w9WgXcQ")).rejects.toMatchObject({
+      name: "UpstreamUnavailableError",
+      code: "upstream_unavailable",
+      retryable: true
+    });
+    expect(upstream.getBasicInfo).toHaveBeenCalledTimes(2);
   });
 });
