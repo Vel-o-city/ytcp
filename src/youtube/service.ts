@@ -107,13 +107,7 @@ export function createYouTubeService(
 
       logger.debug("fetching youtube video", { id: reference.id, source: reference.source });
 
-      const response = await policy.execute(
-        () => upstream.getBasicInfo(reference.id),
-        {
-          label: "video lookup",
-          target: reference.id
-        }
-      );
+      const response = await getVideoLookupResponse(upstream, reference, policy, logger);
       const record = normalizeVideoRecord(response, reference);
 
       return youtubeCache.setLookup(cacheKey, record);
@@ -325,6 +319,39 @@ function createCacheKey(reference: ParsedYouTubeReference): string {
     case "channel":
       return `channel:${reference.source}:${reference.channelId ?? reference.handle ?? reference.customName ?? reference.username ?? reference.canonicalUrl}`;
   }
+}
+
+async function getVideoLookupResponse(
+  client: InnertubeClientLike,
+  reference: YouTubeVideoLookup,
+  policy: YouTubeRequestPolicy,
+  logger: Logger
+): Promise<unknown> {
+  if (client.getInfo) {
+    try {
+      return await policy.execute(
+        () => client.getInfo!(reference.id),
+        {
+          label: "video detail lookup",
+          target: reference.id
+        }
+      );
+    } catch (error) {
+      logger.warn("youtube rich video lookup fell back to basic info", {
+        error: error instanceof Error ? error.message : String(error),
+        id: reference.id,
+        source: reference.source
+      });
+    }
+  }
+
+  return policy.execute(
+    () => client.getBasicInfo(reference.id),
+    {
+      label: "video lookup",
+      target: reference.id
+    }
+  );
 }
 
 async function getSearchContinuationPage(
