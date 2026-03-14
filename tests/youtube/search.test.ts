@@ -5,6 +5,7 @@ import {
   type YouTubeSearchPage,
   type YouTubeSearchResult
 } from "../../src/youtube/contracts.js";
+import { NotAvailableError } from "../../src/lib/mcp-errors.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
 import {
   normalizeSearchPage,
@@ -324,5 +325,25 @@ describe("youtube search service", () => {
     });
     expect(firstPage.getContinuation).toHaveBeenCalledTimes(1);
     expect(upstream.search).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails cleanly when a follow-up page token is missing or expired", async () => {
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn(),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await expect(service.searchVideos({ pageToken: "expired-token" })).rejects.toEqual(
+      new NotAvailableError(
+        "This YouTube search page token is missing or expired. Run the search again to continue.",
+        {
+          cause: "search_page_token_expired"
+        }
+      )
+    );
   });
 });

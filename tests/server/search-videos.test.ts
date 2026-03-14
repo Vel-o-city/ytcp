@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFailureResult, createSuccessResult } from "../../src/contracts/tool-result.js";
-import { InvalidInputError } from "../../src/lib/mcp-errors.js";
+import {
+  createFailureResult,
+  createNotAvailableResult,
+  createSuccessResult
+} from "../../src/contracts/tool-result.js";
+import { InvalidInputError, NotAvailableError } from "../../src/lib/mcp-errors.js";
 import { createServer } from "../../src/server/create-server.js";
 
 type RegisteredTool = {
@@ -221,5 +225,34 @@ describe("search_videos tool", () => {
       )
     );
     expect(youtubeService.searchVideos).not.toHaveBeenCalled();
+  });
+
+  it("returns a not-available result when a follow-up page token has expired", async () => {
+    const youtubeService = {
+      searchVideos: vi.fn().mockRejectedValue(
+        new NotAvailableError(
+          "This YouTube search page token is missing or expired. Run the search again to continue.",
+          {
+            cause: "search_page_token_expired"
+          }
+        )
+      )
+    };
+    const server = createServer({ youtubeService });
+    const tool = (
+      server as unknown as { _registeredTools: Record<string, RegisteredTool> }
+    )._registeredTools.search_videos;
+
+    await expect(
+      tool.handler({
+        pageToken: "expired-token"
+      })
+    ).resolves.toEqual(
+      createNotAvailableResult({
+        summary:
+          "This YouTube search page token is missing or expired. Run the search again to continue.",
+        reason: "search_page_token_expired"
+      })
+    );
   });
 });

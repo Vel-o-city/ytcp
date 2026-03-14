@@ -160,7 +160,7 @@ export function toInnertubeSearchFilters(
 
 export function normalizeSearchPage(
   response: unknown,
-  query: YouTubeSearchQuery
+  query: Extract<YouTubeSearchQuery, { query: string }>
 ): YouTubeSearchPage {
   const videos = extractSearchResults(getValue(response, "videos"));
   const boundedResults = videos.slice(0, query.maxResults ?? videos.length);

@@ -422,7 +422,7 @@ function cacheSearchContinuation(
 function normalizeSearchQuery(input: YouTubeSearchQuery): NormalizedSearchRequest {
   const maxResults = normalizeMaxResults(input.maxResults);
 
-  if ("pageToken" in input) {
+  if (typeof input.pageToken === "string") {
     const pageToken = input.pageToken.trim();
 
     if (!pageToken) {
