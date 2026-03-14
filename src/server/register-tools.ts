@@ -13,6 +13,7 @@ import {
   type YouTubeSearchPage,
   type YouTubeSearchResult,
   type YouTubeSearchQuery,
+  type YouTubeVideoChapter,
   type YouTubeVideoRecord,
   type YouTubeService
 } from "../youtube/contracts.js";
@@ -323,12 +324,26 @@ function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknow
     ...(typeof record.likeCount === "number" ? { likeCount: record.likeCount } : {}),
     ...(record.thumbnails.length > 0 ? { thumbnails: record.thumbnails } : {}),
     ...(record.keywords && record.keywords.length > 0 ? { keywords: record.keywords } : {}),
+    ...(record.category ? { category: record.category } : {}),
+    ...(typeof record.isFamilySafe === "boolean"
+      ? { isFamilySafe: record.isFamilySafe }
+      : {}),
+    ...(typeof record.isUnlisted === "boolean" ? { isUnlisted: record.isUnlisted } : {}),
     ...(typeof record.isLive === "boolean" ? { isLive: record.isLive } : {}),
     ...(typeof record.isUpcoming === "boolean" ? { isUpcoming: record.isUpcoming } : {}),
+    chapters: (record.chapters ?? []).map(shapeVideoChapterData),
     ...(record.playlistId ? { playlistId: record.playlistId } : {}),
     ...(typeof record.startTimeSeconds === "number"
       ? { startTimeSeconds: record.startTimeSeconds }
       : {})
+  };
+}
+
+function shapeVideoChapterData(chapter: YouTubeVideoChapter): Record<string, unknown> {
+  return {
+    title: chapter.title,
+    startTimeSeconds: chapter.startTimeSeconds,
+    ...(chapter.thumbnailUrl ? { thumbnailUrl: chapter.thumbnailUrl } : {})
   };
 }
 

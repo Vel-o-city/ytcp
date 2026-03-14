@@ -30,8 +30,22 @@ describe("get_video_details tool", () => {
         likeCount: 7890,
         thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
         keywords: ["mcp", "typescript"],
+        category: "Education",
+        isFamilySafe: true,
+        isUnlisted: false,
         isLive: false,
         isUpcoming: false,
+        chapters: [
+          {
+            title: "Introduction",
+            startTimeSeconds: 0,
+            thumbnailUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/chapter1.jpg"
+          },
+          {
+            title: "Shared server wiring",
+            startTimeSeconds: 120
+          }
+        ],
         startTimeSeconds: 43
       })
     };
@@ -61,8 +75,22 @@ describe("get_video_details tool", () => {
           likeCount: 7890,
           thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
           keywords: ["mcp", "typescript"],
+          category: "Education",
+          isFamilySafe: true,
+          isUnlisted: false,
           isLive: false,
           isUpcoming: false,
+          chapters: [
+            {
+              title: "Introduction",
+              startTimeSeconds: 0,
+              thumbnailUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/chapter1.jpg"
+            },
+            {
+              title: "Shared server wiring",
+              startTimeSeconds: 120
+            }
+          ],
           startTimeSeconds: 43
         }
       })
@@ -140,7 +168,8 @@ describe("get_video_details tool", () => {
       canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       title: "Long-form walkthrough",
       isLive: false,
-      isUpcoming: false
+      isUpcoming: false,
+      chapters: []
     });
     expect(result.structuredContent.data.description).toHaveLength(600);
     expect(result.structuredContent.data.description).toMatch(/\.\.\.$/);
