@@ -5,10 +5,21 @@ import {
   NotAvailableError,
   UpstreamUnavailableError
 } from "../../src/lib/mcp-errors.js";
+import { createInnertubeClient } from "../../src/youtube/client.js";
+import { createYouTubeCache } from "../../src/youtube/cache.js";
 import {
   createYouTubeRequestPolicy,
   shouldRetryYouTubeError
 } from "../../src/youtube/policies.js";
+
+function createSilentLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  };
+}
 
 describe("shouldRetryYouTubeError", () => {
   it("retries transient upstream and transport failures", () => {
@@ -77,5 +88,52 @@ describe("createYouTubeRequestPolicy", () => {
       code: "upstream_unavailable",
       retryable: true
     });
+  });
+});
+
+describe("createYouTubeCache", () => {
+  it("stores normalized lookup values until their ttl expires", () => {
+    let now = 1_000;
+    const cache = createYouTubeCache({
+      defaultTtlMs: 50,
+      now: () => now
+    });
+
+    cache.setLookup("video:dQw4w9WgXcQ", { title: "Never Gonna Give You Up" });
+
+    expect(
+      cache.getLookup<{ title: string }>("video:dQw4w9WgXcQ")
+    ).toMatchObject({
+      title: "Never Gonna Give You Up"
+    });
+
+    now += 60;
+
+    expect(cache.getLookup("video:dQw4w9WgXcQ")).toBeUndefined();
+  });
+});
+
+describe("client cache wiring", () => {
+  it("reuses the shared session cache hook when one is supplied", async () => {
+    const youtubeCache = createYouTubeCache();
+    const upstream = {
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const createClient = vi.fn().mockResolvedValue(upstream);
+    const client = createInnertubeClient({
+      createClient,
+      youtubeCache,
+      logger: createSilentLogger()
+    });
+
+    await client.getClient();
+
+    expect(createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cache: youtubeCache.session
+      })
+    );
   });
 });
