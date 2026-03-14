@@ -8,6 +8,10 @@ describe("createServer", () => {
     const server = createServer();
     const tools = (server as unknown as { _registeredTools: Record<string, unknown> })
       ._registeredTools;
+    const videoTool = tools.get_video_details as {
+      annotations?: Record<string, unknown>;
+      description?: string;
+    };
     const searchTool = tools.search_videos as {
       annotations?: Record<string, unknown>;
       description?: string;
@@ -17,7 +21,13 @@ describe("createServer", () => {
     expect(server).toBeTruthy();
     expect(server).toBeTypeOf("object");
     expect(server.isConnected()).toBe(false);
-    expect(Object.keys(tools)).toEqual(["server_status", "search_videos"]);
+    expect(Object.keys(tools)).toEqual([
+      "server_status",
+      "get_video_details",
+      "search_videos"
+    ]);
+    expect(videoTool.description).toContain("Fetch compact details");
+    expect(videoTool.annotations).toEqual({ readOnlyHint: true });
     expect(searchTool.description).toContain("Search public YouTube videos");
     expect(searchTool.annotations).toEqual({ readOnlyHint: true });
     expect((server as unknown as { _registeredResources: Record<string, unknown> })._registeredResources).toEqual({});
