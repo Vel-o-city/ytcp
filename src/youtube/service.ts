@@ -24,9 +24,10 @@ import {
   normalizePlaylistRecord,
   normalizeVideoRecord
 } from "./normalize.js";
-import { parseYouTubeInput, type ParsedYouTubeReference } from "./parser.js";
+import { parseYouTubeInput } from "./parser.js";
+import type { ParsedYouTubeReference } from "./reference.js";
 
-type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
+export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   client?: InnertubeClientHandle;
   logger?: Logger;
   parser?: (input: string) => ParsedYouTubeReference;
@@ -98,7 +99,7 @@ function expectReferenceKind<TKind extends ParsedYouTubeReference["kind"]>(
     );
   }
 
-  return reference;
+  return reference as Extract<ParsedYouTubeReference, { kind: TKind }>;
 }
 
 async function resolveChannelTarget(

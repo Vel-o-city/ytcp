@@ -1,4 +1,4 @@
-import { Innertube, UniversalCache, type InnerTubeConfig } from "youtubei.js";
+import { Innertube, UniversalCache, type SessionOptions } from "youtubei.js";
 
 import { createLogger, type Logger } from "../lib/logger.js";
 
@@ -10,8 +10,8 @@ export type InnertubeClientLike = {
 };
 
 export type CreateInnertubeClientOptions = {
-  cache?: InnerTubeConfig["cache"];
-  fetch?: InnerTubeConfig["fetch"];
+  cache?: SessionOptions["cache"];
+  fetch?: SessionOptions["fetch"];
   logger?: Logger;
   visitorData?: string;
   poToken?: string;
@@ -20,11 +20,11 @@ export type CreateInnertubeClientOptions = {
   generateSessionLocally?: boolean;
   retrieveInnertubeConfig?: boolean;
   retrievePlayer?: boolean;
-  createClient?: (config: InnerTubeConfig) => Promise<InnertubeClientLike>;
+  createClient?: (config: SessionOptions) => Promise<InnertubeClientLike>;
 };
 
 export type InnertubeClientHandle = {
-  getConfig: () => InnerTubeConfig;
+  getConfig: () => SessionOptions;
   getClient: () => Promise<InnertubeClientLike>;
   reset: () => void;
 };
@@ -35,7 +35,7 @@ export function createInnertubeClient(
   const logger = options.logger ?? createLogger({ name: "ytcp.youtube.client" });
   const cache = options.cache ?? new UniversalCache(false);
   const createClient = options.createClient ?? Innertube.create;
-  const config: InnerTubeConfig = {
+  const config: SessionOptions = {
     cache,
     retrieve_player: options.retrievePlayer ?? false,
     ...(options.fetch ? { fetch: options.fetch } : {}),

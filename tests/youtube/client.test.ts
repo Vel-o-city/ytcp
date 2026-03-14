@@ -13,6 +13,13 @@ import {
 } from "../../src/youtube/normalize.js";
 import { parseYouTubeInput } from "../../src/youtube/parser.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
+import type {
+  YouTubeChannelReference,
+  YouTubePlaylistReference,
+  YouTubeVideoReference
+} from "../../src/youtube/reference.js";
+import * as youtubeModule from "../../src/youtube/index.js";
+import * as rootModule from "../../src/index.js";
 
 function createSilentLogger() {
   return {
@@ -21,6 +28,40 @@ function createSilentLogger() {
     warn: vi.fn(),
     error: vi.fn()
   };
+}
+
+function expectVideoReference(value: ReturnType<typeof parseYouTubeInput>): YouTubeVideoReference {
+  expect(value.kind).toBe("video");
+
+  if (value.kind !== "video") {
+    throw new Error("Expected a video reference");
+  }
+
+  return value;
+}
+
+function expectPlaylistReference(
+  value: ReturnType<typeof parseYouTubeInput>
+): YouTubePlaylistReference {
+  expect(value.kind).toBe("playlist");
+
+  if (value.kind !== "playlist") {
+    throw new Error("Expected a playlist reference");
+  }
+
+  return value;
+}
+
+function expectChannelReference(
+  value: ReturnType<typeof parseYouTubeInput>
+): YouTubeChannelReference {
+  expect(value.kind).toBe("channel");
+
+  if (value.kind !== "channel") {
+    throw new Error("Expected a channel reference");
+  }
+
+  return value;
 }
 
 describe("youtube normalization contracts", () => {
@@ -48,7 +89,7 @@ describe("youtube normalization contracts", () => {
           is_live: false
         }
       },
-      reference
+      expectVideoReference(reference)
     );
 
     expect(record satisfies YouTubeVideoRecord).toBe(record);
@@ -95,7 +136,7 @@ describe("youtube normalization contracts", () => {
           ]
         }
       },
-      reference
+      expectPlaylistReference(reference)
     );
 
     expect(record satisfies YouTubePlaylistRecord).toBe(record);
@@ -137,7 +178,7 @@ describe("youtube normalization contracts", () => {
           view_count_text: "210M views"
         }
       },
-      reference
+      expectChannelReference(reference)
     );
 
     expect(record satisfies YouTubeChannelRecord).toBe(record);
@@ -191,6 +232,25 @@ describe("createInnertubeClient", () => {
         cache: expect.any(Object)
       })
     );
+  });
+
+  it("keeps the default client boundary free of api keys and external binaries", () => {
+    const client = createInnertubeClient({
+      createClient: vi.fn().mockResolvedValue({
+        getBasicInfo: vi.fn(),
+        getPlaylist: vi.fn(),
+        getChannel: vi.fn()
+      }),
+      logger: createSilentLogger()
+    });
+    const config = client.getConfig() as Record<string, unknown>;
+
+    expect(config.retrieve_player).toBe(false);
+    expect(config).not.toHaveProperty("apiKey");
+    expect(config).not.toHaveProperty("youtubeApiKey");
+    expect(config).not.toHaveProperty("ytDlpPath");
+    expect(config).not.toHaveProperty("ytdlp");
+    expect(config).not.toHaveProperty("binary");
   });
 });
 
@@ -300,5 +360,41 @@ describe("createYouTubeService", () => {
     expect(upstream.getChannel).toHaveBeenCalledWith(
       "UC_x5XG1OV2P6uZZ5FSM9Ttw"
     );
+  });
+});
+
+describe("youtube module exports", () => {
+  it("re-exports the client and service helpers from the youtube module surface", () => {
+    expect(youtubeModule.createInnertubeClient).toBe(createInnertubeClient);
+    expect(youtubeModule.createYouTubeService).toBe(createYouTubeService);
+    expect(youtubeModule.normalizeVideoRecord).toBe(normalizeVideoRecord);
+  });
+
+  it("re-exports the youtube access layer from the package entry", async () => {
+    const logger = createSilentLogger();
+    const upstream = {
+      getBasicInfo: vi.fn().mockResolvedValue({
+        basic_info: {
+          title: "Never Gonna Give You Up"
+        }
+      }),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const service = rootModule.createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger
+    });
+
+    await expect(service.getVideo("dQw4w9WgXcQ")).resolves.toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      title: "Never Gonna Give You Up"
+    });
+    expect(rootModule.createInnertubeClient).toBe(createInnertubeClient);
   });
 });
