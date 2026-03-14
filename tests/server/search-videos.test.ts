@@ -144,6 +144,111 @@ describe("search_videos tool", () => {
     });
   });
 
+  it("keeps structuredContent stable across initial and follow-up search pages", async () => {
+    const youtubeService = {
+      searchVideos: vi
+        .fn()
+        .mockResolvedValueOnce({
+          query: "mcp server",
+          pageSize: 1,
+          nextPageToken: "page-1",
+          results: [
+            {
+              kind: "video",
+              id: "dQw4w9WgXcQ",
+              canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+              title: "Video one",
+              channelId: "UC123",
+              durationSeconds: 754,
+              channelTitle: "Example Dev",
+              thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+              isLive: false,
+              isUpcoming: false
+            }
+          ]
+        })
+        .mockResolvedValueOnce({
+          query: "mcp server",
+          pageSize: 1,
+          results: [
+            {
+              kind: "video",
+              id: "9bZkp7q19f0",
+              canonicalUrl: "https://www.youtube.com/watch?v=9bZkp7q19f0",
+              title: "Video two",
+              channelId: "UC999",
+              durationSeconds: 245,
+              isLive: false,
+              isUpcoming: false,
+              thumbnails: []
+            }
+          ]
+        })
+    };
+    const server = createServer({ youtubeService });
+    const tool = (
+      server as unknown as { _registeredTools: Record<string, RegisteredTool> }
+    )._registeredTools.search_videos;
+
+    const initial = (await tool.handler({
+      query: "mcp server"
+    })) as {
+      structuredContent: {
+        status: string;
+        data: {
+          nextPageToken?: string;
+          pageSize: number;
+          query: string;
+          results: Array<Record<string, unknown>>;
+        };
+      };
+    };
+    const followUp = (await tool.handler({
+      pageToken: "page-1"
+    })) as {
+      structuredContent: {
+        status: string;
+        data: {
+          nextPageToken?: string;
+          pageSize: number;
+          query: string;
+          results: Array<Record<string, unknown>>;
+        };
+      };
+    };
+
+    expect(initial.structuredContent.status).toBe("ok");
+    expect(initial.structuredContent.data).toMatchObject({
+      query: "mcp server",
+      pageSize: 1,
+      nextPageToken: "page-1"
+    });
+    expect(initial.structuredContent.data.results[0]).toMatchObject({
+      id: "dQw4w9WgXcQ",
+      title: "Video one",
+      channelTitle: "Example Dev"
+    });
+    expect(initial.structuredContent.data.results[0]).not.toHaveProperty("channelId");
+    expect(initial.structuredContent.data.results[0]).not.toHaveProperty(
+      "durationSeconds"
+    );
+
+    expect(followUp.structuredContent.status).toBe("ok");
+    expect(followUp.structuredContent.data).toMatchObject({
+      query: "mcp server",
+      pageSize: 1
+    });
+    expect(followUp.structuredContent.data).not.toHaveProperty("nextPageToken");
+    expect(followUp.structuredContent.data.results[0]).toMatchObject({
+      id: "9bZkp7q19f0",
+      title: "Video two"
+    });
+    expect(followUp.structuredContent.data.results[0]).not.toHaveProperty("channelId");
+    expect(followUp.structuredContent.data.results[0]).not.toHaveProperty(
+      "durationSeconds"
+    );
+  });
+
   it("returns actionable invalid-input failures for malformed search requests", async () => {
     const server = createServer({
       youtubeService: {

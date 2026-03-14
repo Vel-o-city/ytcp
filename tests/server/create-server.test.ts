@@ -8,12 +8,18 @@ describe("createServer", () => {
     const server = createServer();
     const tools = (server as unknown as { _registeredTools: Record<string, unknown> })
       ._registeredTools;
+    const searchTool = tools.search_videos as {
+      annotations?: Record<string, unknown>;
+      description?: string;
+    };
 
     expect(server).toBeInstanceOf(McpServer);
     expect(server).toBeTruthy();
     expect(server).toBeTypeOf("object");
     expect(server.isConnected()).toBe(false);
     expect(Object.keys(tools)).toEqual(["server_status", "search_videos"]);
+    expect(searchTool.description).toContain("Search public YouTube videos");
+    expect(searchTool.annotations).toEqual({ readOnlyHint: true });
     expect((server as unknown as { _registeredResources: Record<string, unknown> })._registeredResources).toEqual({});
     expect((server as unknown as { _registeredPrompts: Record<string, unknown> })._registeredPrompts).toEqual({});
     expect(SERVER_INFO).toEqual({
