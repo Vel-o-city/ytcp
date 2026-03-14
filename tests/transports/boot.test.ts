@@ -100,13 +100,14 @@ function createMockResponse(): ServerResponse {
 }
 
 describe("root transport boot surface", () => {
-  it("re-exports the explicit transport bootstraps and search surface", () => {
+  it("re-exports the explicit transport bootstraps and shared youtube surface", () => {
     expect(rootExports.startStdioServer).toBe(startStdioServer);
     expect(rootExports.startHttpServer).toBeDefined();
     expect(rootExports.createStreamableHttpRuntime).toBe(
       createStreamableHttpRuntime
     );
     expect(rootExports.createYouTubeService).toBeDefined();
+    expect(rootExports.normalizeVideoRecord).toBeDefined();
     expect(rootExports.normalizeSearchPage).toBeDefined();
     expect(rootExports.DEFAULT_SEARCH_RESULTS).toBe(5);
   });
@@ -114,6 +115,26 @@ describe("root transport boot surface", () => {
   it("boots stdio and hosted HTTP from the same shared server factory contract", async () => {
     const createdServers: ReturnType<typeof createServer>[] = [];
     const youtubeService = {
+      getVideo: vi.fn().mockResolvedValue({
+        kind: "video",
+        id: "dQw4w9WgXcQ",
+        canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        source: "watch",
+        title: "Build an MCP Server",
+        description: "Practical walkthrough",
+        channelTitle: "Example Dev",
+        category: "Education",
+        isFamilySafe: true,
+        thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+        isLive: false,
+        isUpcoming: false,
+        chapters: [
+          {
+            title: "Introduction",
+            startTimeSeconds: 0
+          }
+        ]
+      }),
       searchVideos: vi.fn().mockResolvedValue({
         query: "mcp server",
         pageSize: 1,
@@ -151,8 +172,10 @@ describe("root transport boot surface", () => {
       stdioRuntime.server as unknown as {
         _registeredTools: Record<string, RegisteredTool>;
       }
-    )._registeredTools.search_videos;
-    const stdioResult = await tool.handler({ query: "mcp server" });
+    )._registeredTools.get_video_details;
+    const stdioResult = await tool.handler({
+      video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
 
     await httpRuntime.handleRequest(
       createMockRequest(),
@@ -163,38 +186,44 @@ describe("root transport boot surface", () => {
       createdServers[1] as unknown as {
         _registeredTools: Record<string, RegisteredTool>;
       }
-    )._registeredTools.search_videos;
-    const httpResult = await httpTool.handler({ query: "mcp server" });
+    )._registeredTools.get_video_details;
+    const httpResult = await httpTool.handler({
+      video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
 
     expect(serverFactory).toHaveBeenCalledTimes(2);
     expect(stdioResult).toEqual(httpResult);
     expect(httpResult).toEqual(
       createSuccessResult({
-        summary: 'Showing 1 video match for "mcp server".',
+        summary: 'Loaded public video details for "Build an MCP Server".',
         data: {
-          query: "mcp server",
-          pageSize: 1,
-          results: [
+          id: "dQw4w9WgXcQ",
+          canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          title: "Build an MCP Server",
+          description: "Practical walkthrough",
+          channelTitle: "Example Dev",
+          category: "Education",
+          isFamilySafe: true,
+          thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+          isLive: false,
+          isUpcoming: false,
+          chapters: [
             {
-              kind: "video",
-              id: "dQw4w9WgXcQ",
-              canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-              title: "Build an MCP Server",
-              channelTitle: "Example Dev",
-              thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
-              isLive: false,
-              isUpcoming: false
+              title: "Introduction",
+              startTimeSeconds: 0
             }
           ]
         }
       })
     );
-    expect(youtubeService.searchVideos).toHaveBeenNthCalledWith(1, {
-      query: "mcp server"
-    });
-    expect(youtubeService.searchVideos).toHaveBeenNthCalledWith(2, {
-      query: "mcp server"
-    });
+    expect(youtubeService.getVideo).toHaveBeenNthCalledWith(
+      1,
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    );
+    expect(youtubeService.getVideo).toHaveBeenNthCalledWith(
+      2,
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    );
 
     await httpRuntime.close();
     await stdioRuntime.close();
