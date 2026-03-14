@@ -319,11 +319,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function createCacheKey(reference: ParsedYouTubeReference): string {
   switch (reference.kind) {
     case "video":
-      return `video:${reference.id}:playlist=${reference.playlistId ?? ""}:start=${reference.startTimeSeconds ?? ""}`;
+      return `video:${reference.id}:source=${reference.source}:playlist=${reference.playlistId ?? ""}:start=${reference.startTimeSeconds ?? ""}`;
     case "playlist":
-      return `playlist:${reference.id}`;
+      return `playlist:${reference.id}:source=${reference.source}:video=${reference.videoId ?? ""}`;
     case "channel":
-      return `channel:${reference.channelId ?? reference.handle ?? reference.customName ?? reference.username ?? reference.canonicalUrl}`;
+      return `channel:${reference.source}:${reference.channelId ?? reference.handle ?? reference.customName ?? reference.username ?? reference.canonicalUrl}`;
   }
 }
 
