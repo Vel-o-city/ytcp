@@ -13,7 +13,7 @@ describe("createServer", () => {
     expect(server).toBeTruthy();
     expect(server).toBeTypeOf("object");
     expect(server.isConnected()).toBe(false);
-    expect(Object.keys(tools)).toEqual(["server_status"]);
+    expect(Object.keys(tools)).toEqual(["server_status", "search_videos"]);
     expect((server as unknown as { _registeredResources: Record<string, unknown> })._registeredResources).toEqual({});
     expect((server as unknown as { _registeredPrompts: Record<string, unknown> })._registeredPrompts).toEqual({});
     expect(SERVER_INFO).toEqual({

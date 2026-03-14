@@ -9,6 +9,8 @@ export {
   type YouTubeVideoReference
 } from "./reference.js";
 export {
+  DEFAULT_SEARCH_RESULTS,
+  MAX_SEARCH_RESULTS,
   type YouTubeChannelInput,
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
@@ -17,6 +19,14 @@ export {
   type YouTubePlaylistInput,
   type YouTubePlaylistLookup,
   type YouTubePlaylistRecord,
+  type YouTubeSearchDuration,
+  type YouTubeSearchFeature,
+  type YouTubeSearchFilters,
+  type YouTubeSearchPage,
+  type YouTubeSearchQuery,
+  type YouTubeSearchResult,
+  type YouTubeSearchSortBy,
+  type YouTubeSearchUploadDate,
   type YouTubeService,
   type YouTubeVideoInput,
   type YouTubeVideoLookup,
@@ -36,6 +46,8 @@ export {
 export {
   normalizeChannelRecord,
   normalizePlaylistRecord,
+  normalizeSearchPage,
+  toInnertubeSearchFilters,
   normalizeVideoRecord
 } from "./normalize.js";
 export { normalizeYouTubeUrl, parseYouTubeInput } from "./parser.js";
