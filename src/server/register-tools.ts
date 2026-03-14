@@ -23,6 +23,7 @@ export type RegisterToolDependencies = {
   youtubeService?: Partial<Pick<YouTubeService, "getVideo" | "searchVideos">>;
 };
 
+const MAX_VIDEO_DESCRIPTION_LENGTH = 600;
 const searchFeatureSchema = z.enum([
   "hd",
   "subtitles",
@@ -311,7 +312,9 @@ function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknow
     id: record.id,
     canonicalUrl: record.canonicalUrl,
     ...(record.title ? { title: record.title } : {}),
-    ...(record.description ? { description: record.description } : {}),
+    ...(record.description
+      ? { description: truncateText(record.description, MAX_VIDEO_DESCRIPTION_LENGTH) }
+      : {}),
     ...(record.channelTitle ? { channelTitle: record.channelTitle } : {}),
     ...(typeof record.durationSeconds === "number"
       ? { durationSeconds: record.durationSeconds }
@@ -327,6 +330,14 @@ function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknow
       ? { startTimeSeconds: record.startTimeSeconds }
       : {})
   };
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 function shapeSearchResultData(result: YouTubeSearchResult): Record<string, unknown> {

@@ -104,4 +104,47 @@ describe("get_video_details tool", () => {
       )
     );
   });
+
+  it("keeps the video detail payload compact for long descriptions and omits internal fields", async () => {
+    const server = createServer({
+      youtubeService: {
+        getVideo: vi.fn().mockResolvedValue({
+          kind: "video",
+          id: "dQw4w9WgXcQ",
+          canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          source: "id",
+          title: "Long-form walkthrough",
+          description: "A".repeat(620),
+          channelId: "UC123",
+          thumbnails: [],
+          isLive: false,
+          isUpcoming: false
+        })
+      }
+    });
+    const tool = (
+      server as unknown as { _registeredTools: Record<string, RegisteredTool> }
+    )._registeredTools.get_video_details;
+    const result = (await tool.handler({
+      video: "dQw4w9WgXcQ"
+    })) as {
+      structuredContent: {
+        status: string;
+        data: Record<string, unknown>;
+      };
+    };
+
+    expect(result.structuredContent.status).toBe("ok");
+    expect(result.structuredContent.data).toMatchObject({
+      id: "dQw4w9WgXcQ",
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      title: "Long-form walkthrough",
+      isLive: false,
+      isUpcoming: false
+    });
+    expect(result.structuredContent.data.description).toHaveLength(600);
+    expect(result.structuredContent.data.description).toMatch(/\.\.\.$/);
+    expect(result.structuredContent.data).not.toHaveProperty("source");
+    expect(result.structuredContent.data).not.toHaveProperty("channelId");
+  });
 });
