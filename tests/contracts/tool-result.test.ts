@@ -135,4 +135,18 @@ describe("tool result helpers", () => {
       }
     });
   });
+
+  it("falls back to an internal error contract for unknown failures", () => {
+    expect(createResultFromError(new Error("Unexpected transport failure."))).toEqual({
+      content: [{ type: "text", text: "Unexpected transport failure." }],
+      isError: true,
+      structuredContent: {
+        status: "error",
+        error: {
+          code: "internal_error",
+          message: "Unexpected transport failure."
+        }
+      }
+    });
+  });
 });
