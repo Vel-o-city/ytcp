@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createFailureResult,
-  createNotAvailableResult,
-  createSuccessResult
-} from "../../src/contracts/tool-result.js";
+import { createFailureResult, createSuccessResult } from "../../src/contracts/tool-result.js";
 import { InvalidInputError } from "../../src/lib/mcp-errors.js";
 import { createServer } from "../../src/server/create-server.js";
 
@@ -42,7 +38,16 @@ describe("search_videos tool", () => {
     expect(tool).toBeDefined();
     expect(tool.description).toContain("Search public YouTube videos");
     expect(tool.annotations).toEqual({ readOnlyHint: true });
-    await expect(tool.handler({ query: "mcp server" })).resolves.toEqual(
+    await expect(
+      tool.handler({
+        query: "mcp server",
+        maxResults: 3,
+        filters: {
+          uploadDate: "week",
+          features: ["hd", "hd"]
+        }
+      })
+    ).resolves.toEqual(
       createSuccessResult({
         summary: 'Found 1 matching video result for "mcp server".',
         data: {
@@ -64,7 +69,12 @@ describe("search_videos tool", () => {
       })
     );
     expect(youtubeService.searchVideos).toHaveBeenCalledWith({
-      query: "mcp server"
+      query: "mcp server",
+      maxResults: 3,
+      filters: {
+        uploadDate: "week",
+        features: ["hd"]
+      }
     });
   });
 
@@ -92,20 +102,29 @@ describe("search_videos tool", () => {
     );
   });
 
-  it("surfaces an explicit not-available result when no search service is configured", async () => {
-    const server = createServer();
+  it("rejects unsupported filter values before the service is called", async () => {
+    const youtubeService = {
+      searchVideos: vi.fn()
+    };
+    const server = createServer({ youtubeService });
     const tool = (
       server as unknown as { _registeredTools: Record<string, RegisteredTool> }
     )._registeredTools.search_videos;
 
-    await expect(tool.handler({ query: "mcp server" })).resolves.toEqual(
-      createNotAvailableResult({
-        summary: "YouTube search is not configured in this build yet.",
-        reason: "search_service_unconfigured",
-        data: {
-          server: "ytcp"
+    await expect(
+      tool.handler({
+        query: "mcp server",
+        filters: {
+          duration: "very-long"
         }
       })
+    ).resolves.toEqual(
+      createFailureResult(
+        new InvalidInputError(
+          "Unsupported `filters.duration` value. Use all, short, medium, or long."
+        )
+      )
     );
+    expect(youtubeService.searchVideos).not.toHaveBeenCalled();
   });
 });

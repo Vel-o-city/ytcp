@@ -1,10 +1,15 @@
 import { createLogger, type Logger } from "../lib/logger.js";
-import { InvalidInputError } from "../lib/mcp-errors.js";
+import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
 
 import {
+  DEFAULT_SEARCH_RESULTS,
+  MAX_SEARCH_RESULTS,
   type YouTubeChannelInput,
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
+  type YouTubeSearchFeature,
+  type YouTubeSearchPage,
+  type YouTubeSearchQuery,
   type YouTubeService,
   type YouTubeVideoInput,
   type YouTubeVideoLookup,
@@ -23,6 +28,8 @@ import { createYouTubeCache, type YouTubeCache } from "./cache.js";
 import {
   normalizeChannelRecord,
   normalizePlaylistRecord,
+  normalizeSearchPage,
+  toInnertubeSearchFilters,
   normalizeVideoRecord
 } from "./normalize.js";
 import {
@@ -140,6 +147,47 @@ export function createYouTubeService(
       const record = normalizeChannelRecord(response, reference);
 
       return youtubeCache.setLookup(cacheKey, record);
+    },
+    searchVideos: async (input: YouTubeSearchQuery): Promise<YouTubeSearchPage> => {
+      const searchQuery = normalizeSearchQuery(input);
+      const cacheKey = createSearchCacheKey(searchQuery);
+      const cached = youtubeCache.getLookup<YouTubeSearchPage>(cacheKey);
+
+      if (cached) {
+        logger.debug("youtube search cache hit", {
+          query: searchQuery.query,
+          maxResults: searchQuery.maxResults
+        });
+        return cached;
+      }
+
+      const upstream = await client.getClient();
+
+      if (!upstream.search) {
+        throw new NotAvailableError(
+          "This YouTube client does not support public search requests.",
+          {
+            cause: "search_unsupported"
+          }
+        );
+      }
+
+      logger.debug("fetching youtube search", {
+        query: searchQuery.query,
+        hasFilters: Boolean(searchQuery.filters),
+        maxResults: searchQuery.maxResults
+      });
+
+      const response = await policy.execute(
+        () => upstream.search!(searchQuery.query, toInnertubeSearchFilters(searchQuery.filters)),
+        {
+          label: "search lookup",
+          target: searchQuery.query
+        }
+      );
+      const page = normalizeSearchPage(response, searchQuery);
+
+      return youtubeCache.setLookup(cacheKey, page);
     }
   };
 }
@@ -231,4 +279,55 @@ function createCacheKey(reference: ParsedYouTubeReference): string {
     case "channel":
       return `channel:${reference.channelId ?? reference.handle ?? reference.customName ?? reference.username ?? reference.canonicalUrl}`;
   }
+}
+
+function normalizeSearchQuery(input: YouTubeSearchQuery): YouTubeSearchQuery {
+  const query = input.query.trim();
+
+  if (!query) {
+    throw new InvalidInputError(
+      "Provide a non-empty search query before requesting YouTube search results."
+    );
+  }
+
+  const maxResults = input.maxResults ?? DEFAULT_SEARCH_RESULTS;
+
+  if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
+    throw new InvalidInputError(
+      `\`maxResults\` must be between 1 and ${MAX_SEARCH_RESULTS}.`
+    );
+  }
+
+  return {
+    query,
+    maxResults,
+    ...(input.filters
+      ? {
+          filters: {
+            ...(input.filters.uploadDate ? { uploadDate: input.filters.uploadDate } : {}),
+            ...(input.filters.duration ? { duration: input.filters.duration } : {}),
+            ...(input.filters.sortBy ? { sortBy: input.filters.sortBy } : {}),
+            ...(input.filters.features
+              ? {
+                  features: input.filters.features.filter(
+                    dedupeFeatures
+                  ) as YouTubeSearchFeature[]
+                }
+              : {})
+          }
+        }
+      : {})
+  };
+}
+
+function createSearchCacheKey(query: YouTubeSearchQuery): string {
+  return `search:${query.query}:max=${query.maxResults ?? DEFAULT_SEARCH_RESULTS}:filters=${JSON.stringify(query.filters ?? {})}`;
+}
+
+function dedupeFeatures(
+  feature: YouTubeSearchFeature,
+  index: number,
+  values: YouTubeSearchFeature[]
+): boolean {
+  return values.indexOf(feature) === index;
 }

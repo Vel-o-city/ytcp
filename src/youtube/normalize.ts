@@ -1,5 +1,3 @@
-import type { SearchFilters } from "youtubei.js";
-
 import type {
   YouTubeSearchFilters,
   YouTubeSearchPage,
@@ -12,8 +10,10 @@ import type {
   YouTubeVideoLookup,
   YouTubeVideoRecord
 } from "./contracts.js";
+import type { InnertubeClientLike } from "./client.js";
 
 type UnknownRecord = Record<string, unknown>;
+type InnertubeSearchFilters = Parameters<InnertubeClientLike["search"]>[1];
 
 export function normalizeVideoRecord(
   response: unknown,
@@ -134,7 +134,7 @@ export function normalizeChannelRecord(
 
 export function toInnertubeSearchFilters(
   filters?: YouTubeSearchFilters
-): SearchFilters | undefined {
+): InnertubeSearchFilters {
   if (!filters) {
     return undefined;
   }
@@ -143,7 +143,7 @@ export function toInnertubeSearchFilters(
     (feature, index, values) => values.indexOf(feature) === index
   );
 
-  const mapped: SearchFilters = {
+  const mapped: NonNullable<InnertubeSearchFilters> = {
     ...(filters.uploadDate ? { upload_date: filters.uploadDate } : {}),
     ...(filters.duration ? { duration: filters.duration } : {}),
     ...(filters.sortBy ? { sort_by: filters.sortBy } : {}),

@@ -14,6 +14,7 @@ import {
   type YouTubeSearchQuery,
   type YouTubeService
 } from "../youtube/contracts.js";
+import { createYouTubeService } from "../youtube/service.js";
 import { SERVER_INFO } from "./create-server.js";
 
 export type RegisterToolDependencies = {
@@ -50,6 +51,8 @@ export function registerTools(
   _server: McpServer,
   dependencies: RegisterToolDependencies = {}
 ): void {
+  const youtubeService = dependencies.youtubeService ?? createYouTubeService();
+
   _server.registerTool(
     "server_status",
     {
@@ -97,19 +100,6 @@ export function registerTools(
     async args => {
       try {
         const input = parseSearchVideosInput(args);
-        const youtubeService = dependencies.youtubeService;
-
-        if (!youtubeService) {
-          throw new NotAvailableError(
-            "YouTube search is not configured in this build yet.",
-            {
-              cause: "search_service_unconfigured",
-              details: {
-                server: SERVER_INFO.name
-              }
-            }
-          );
-        }
 
         const page = await youtubeService.searchVideos(input);
 
