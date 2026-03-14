@@ -11,6 +11,7 @@ import {
   type YouTubeSearchFeature,
   type YouTubeSearchFilters,
   type YouTubeSearchPage,
+  type YouTubeSearchResult,
   type YouTubeSearchQuery,
   type YouTubeService
 } from "../youtube/contracts.js";
@@ -41,7 +42,8 @@ const searchFiltersSchema = z
   .strict();
 const searchVideosInputSchema = z
   .object({
-    query: z.string().trim().min(1).max(200),
+    query: z.string().trim().min(1).max(200).optional(),
+    pageToken: z.string().trim().min(1).max(200).optional(),
     maxResults: z.number().int().min(1).max(MAX_SEARCH_RESULTS).optional(),
     filters: searchFiltersSchema.optional()
   })
@@ -105,7 +107,7 @@ export function registerTools(
 
         return createSuccessResult({
           summary: summarizeSearchPage(page),
-          data: page as Record<string, unknown>
+          data: shapeSearchPageData(page)
         });
       } catch (error) {
         return createResultFromError(error);
@@ -130,6 +132,10 @@ function parseSearchVideosInput(input: unknown): YouTubeSearchQuery {
         throw new InvalidInputError(
           `\`maxResults\` must be between 1 and ${MAX_SEARCH_RESULTS}.`
         );
+      case "pageToken":
+        throw new InvalidInputError(
+          "Provide a non-empty `pageToken` string to request the next search page."
+        );
       case "filters.uploadDate":
         throw new InvalidInputError(
           "Unsupported `filters.uploadDate` value. Use all, hour, today, week, month, or year."
@@ -150,8 +156,38 @@ function parseSearchVideosInput(input: unknown): YouTubeSearchQuery {
     }
   }
 
+  const hasQuery = typeof parsed.data.query === "string";
+  const hasPageToken = typeof parsed.data.pageToken === "string";
+
+  if (!hasQuery && !hasPageToken) {
+    throw new InvalidInputError(
+      "Provide either a `query` string or a `pageToken` string to search public YouTube videos."
+    );
+  }
+
+  if (hasQuery && hasPageToken) {
+    throw new InvalidInputError(
+      "Provide either `query` or `pageToken`, not both, when using `search_videos`."
+    );
+  }
+
+  if (hasPageToken && parsed.data.filters) {
+    throw new InvalidInputError(
+      "Follow-up search page requests cannot include `filters`; use the returned `pageToken` by itself."
+    );
+  }
+
+  if (hasPageToken) {
+    return {
+      pageToken: parsed.data.pageToken!.trim(),
+      ...(typeof parsed.data.maxResults === "number"
+        ? { maxResults: parsed.data.maxResults }
+        : {})
+    };
+  }
+
   return {
-    query: parsed.data.query.trim(),
+    query: parsed.data.query!.trim(),
     ...(typeof parsed.data.maxResults === "number"
       ? { maxResults: parsed.data.maxResults }
       : {}),
@@ -181,7 +217,36 @@ function summarizeSearchPage(page: YouTubeSearchPage): string {
     return `No public video matches were found for "${page.query}".`;
   }
 
-  return `Found ${page.results.length} matching video result${
+  return `Showing ${page.results.length} video match${
     page.results.length === 1 ? "" : "s"
-  } for "${page.query}".`;
+  } for "${page.query}".${page.nextPageToken ? " More are available." : ""}`;
+}
+
+function shapeSearchPageData(page: YouTubeSearchPage): Record<string, unknown> {
+  return {
+    query: page.query,
+    pageSize: page.pageSize,
+    ...(typeof page.estimatedResults === "number"
+      ? { estimatedResults: page.estimatedResults }
+      : {}),
+    ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}),
+    results: page.results.map(shapeSearchResultData)
+  };
+}
+
+function shapeSearchResultData(result: YouTubeSearchResult): Record<string, unknown> {
+  return {
+    kind: result.kind,
+    id: result.id,
+    canonicalUrl: result.canonicalUrl,
+    title: result.title,
+    ...(result.channelTitle ? { channelTitle: result.channelTitle } : {}),
+    ...(result.publishedText ? { publishedText: result.publishedText } : {}),
+    ...(result.viewCountText ? { viewCountText: result.viewCountText } : {}),
+    ...(result.durationText ? { durationText: result.durationText } : {}),
+    ...(result.snippet ? { snippet: result.snippet } : {}),
+    ...(result.thumbnails.length > 0 ? { thumbnails: result.thumbnails } : {}),
+    isLive: result.isLive,
+    isUpcoming: result.isUpcoming
+  };
 }

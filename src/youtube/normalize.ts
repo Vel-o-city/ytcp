@@ -14,6 +14,9 @@ import type { InnertubeClientLike } from "./client.js";
 
 type UnknownRecord = Record<string, unknown>;
 type InnertubeSearchFilters = Parameters<InnertubeClientLike["search"]>[1];
+const SEARCH_REFINEMENT_LIMIT = 3;
+const SEARCH_SNIPPET_MAX_LENGTH = 160;
+const SEARCH_THUMBNAIL_LIMIT = 1;
 
 export function normalizeVideoRecord(
   response: unknown,
@@ -161,12 +164,17 @@ export function normalizeSearchPage(
 ): YouTubeSearchPage {
   const videos = extractSearchResults(getValue(response, "videos"));
   const boundedResults = videos.slice(0, query.maxResults ?? videos.length);
+  const estimatedResults = pickNumber(getValue(response, "estimated_results"));
+  const refinements = extractTextList(getValue(response, "refinements"))?.slice(
+    0,
+    SEARCH_REFINEMENT_LIMIT
+  );
 
   return {
     query: query.query,
     pageSize: boundedResults.length,
-    estimatedResults: pickNumber(getValue(response, "estimated_results")),
-    refinements: extractTextList(getValue(response, "refinements")),
+    ...(typeof estimatedResults === "number" ? { estimatedResults } : {}),
+    ...(refinements && refinements.length > 0 ? { refinements } : {}),
     ...(query.filters ? { filters: query.filters } : {}),
     results: boundedResults
   };
@@ -324,8 +332,8 @@ function normalizeSearchResult(value: unknown): YouTubeSearchResult | null {
     viewCountText: pickText(item.view_count, item.short_view_count),
     durationText: pickText(item.length_text, getValue(duration, "text")),
     durationSeconds: pickNumber(getValue(duration, "seconds")),
-    snippet: pickText(item.description_snippet),
-    thumbnails: extractThumbnailUrls(item.thumbnails),
+    snippet: truncateText(pickText(item.description_snippet), SEARCH_SNIPPET_MAX_LENGTH),
+    thumbnails: extractThumbnailUrls(item.thumbnails).slice(0, SEARCH_THUMBNAIL_LIMIT),
     isLive: pickBoolean(item.is_live) ?? false,
     isUpcoming: pickBoolean(item.is_upcoming) ?? false
   };
@@ -337,6 +345,14 @@ function extractThumbnailUrls(value: unknown): string[] {
   collectThumbnailUrls(value, urls);
 
   return [...urls];
+}
+
+function truncateText(value: string | undefined, maxLength: number): string | undefined {
+  if (!value || value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
 function collectThumbnailUrls(value: unknown, urls: Set<string>): void {
