@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { createLogger, type Logger } from "../lib/logger.js";
 import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
 
@@ -8,6 +10,7 @@ import {
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
   type YouTubeSearchFeature,
+  type YouTubeSearchFilters,
   type YouTubeSearchPage,
   type YouTubeSearchQuery,
   type YouTubeService,
@@ -41,15 +44,42 @@ import type { ParsedYouTubeReference } from "./reference.js";
 
 export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   client?: InnertubeClientHandle;
+  createContinuationToken?: () => string;
   logger?: Logger;
   parser?: (input: string) => ParsedYouTubeReference;
   policy?: YouTubeRequestPolicy;
   youtubeCache?: YouTubeCache;
 };
 
+type SearchFeedLike = Awaited<ReturnType<NonNullable<InnertubeClientLike["search"]>>>;
+
+type SearchContinuationState = {
+  query: string;
+  filters?: YouTubeSearchFilters;
+  response: SearchFeedLike;
+};
+
+type InitialSearchRequest = {
+  kind: "initial";
+  query: string;
+  maxResults: number;
+  filters?: YouTubeSearchFilters;
+};
+
+type ContinuationSearchRequest = {
+  kind: "continuation";
+  pageToken: string;
+  maxResults: number;
+};
+
+type NormalizedSearchRequest = InitialSearchRequest | ContinuationSearchRequest;
+
+const SEARCH_TTL_MS = 2 * 60 * 1000;
+
 export function createYouTubeService(
   options: CreateYouTubeServiceOptions = {}
 ): YouTubeService {
+  const createContinuationToken = options.createContinuationToken ?? randomUUID;
   const logger = options.logger ?? createLogger({ name: "ytcp.youtube.service" });
   const parser = options.parser ?? parseYouTubeInput;
   const youtubeCache = options.youtubeCache ?? createYouTubeCache();
@@ -149,14 +179,27 @@ export function createYouTubeService(
       return youtubeCache.setLookup(cacheKey, record);
     },
     searchVideos: async (input: YouTubeSearchQuery): Promise<YouTubeSearchPage> => {
-      const searchQuery = normalizeSearchQuery(input);
-      const cacheKey = createSearchCacheKey(searchQuery);
+      const searchRequest = normalizeSearchQuery(input);
+
+      if (searchRequest.kind === "continuation") {
+        return getSearchContinuationPage(
+          searchRequest,
+          {
+            createContinuationToken,
+            logger,
+            policy,
+            youtubeCache
+          }
+        );
+      }
+
+      const cacheKey = createSearchCacheKey(searchRequest);
       const cached = youtubeCache.getLookup<YouTubeSearchPage>(cacheKey);
 
       if (cached) {
         logger.debug("youtube search cache hit", {
-          query: searchQuery.query,
-          maxResults: searchQuery.maxResults
+          query: searchRequest.query,
+          maxResults: searchRequest.maxResults
         });
         return cached;
       }
@@ -173,21 +216,24 @@ export function createYouTubeService(
       }
 
       logger.debug("fetching youtube search", {
-        query: searchQuery.query,
-        hasFilters: Boolean(searchQuery.filters),
-        maxResults: searchQuery.maxResults
+        query: searchRequest.query,
+        hasFilters: Boolean(searchRequest.filters),
+        maxResults: searchRequest.maxResults
       });
 
       const response = await policy.execute(
-        () => upstream.search!(searchQuery.query, toInnertubeSearchFilters(searchQuery.filters)),
+        () => upstream.search(searchRequest.query, toInnertubeSearchFilters(searchRequest.filters)),
         {
           label: "search lookup",
-          target: searchQuery.query
+          target: searchRequest.query
         }
       );
-      const page = normalizeSearchPage(response, searchQuery);
+      const page = buildSearchPage(response, searchRequest, {
+        createContinuationToken,
+        youtubeCache
+      });
 
-      return youtubeCache.setLookup(cacheKey, page);
+      return youtubeCache.setLookup(cacheKey, page, SEARCH_TTL_MS);
     }
   };
 }
@@ -281,7 +327,117 @@ function createCacheKey(reference: ParsedYouTubeReference): string {
   }
 }
 
-function normalizeSearchQuery(input: YouTubeSearchQuery): YouTubeSearchQuery {
+async function getSearchContinuationPage(
+  searchRequest: ContinuationSearchRequest,
+  dependencies: {
+    createContinuationToken: () => string;
+    logger: Logger;
+    policy: YouTubeRequestPolicy;
+    youtubeCache: YouTubeCache;
+  }
+): Promise<YouTubeSearchPage> {
+  const continuation = dependencies.youtubeCache.getContinuation<SearchContinuationState>(
+    searchRequest.pageToken
+  );
+
+  if (!continuation) {
+    throw new NotAvailableError(
+      "This YouTube search page token is missing or expired. Run the search again to continue.",
+      {
+        cause: "search_page_token_expired"
+      }
+    );
+  }
+
+  dependencies.logger.debug("fetching youtube search continuation", {
+    query: continuation.query,
+    pageToken: searchRequest.pageToken,
+    maxResults: searchRequest.maxResults
+  });
+
+  const response = await dependencies.policy.execute(
+    () => continuation.response.getContinuation(),
+    {
+      label: "search continuation",
+      target: continuation.query
+    }
+  );
+
+  return buildSearchPage(
+    response,
+    {
+      kind: "initial",
+      query: continuation.query,
+      maxResults: searchRequest.maxResults,
+      ...(continuation.filters ? { filters: continuation.filters } : {})
+    },
+    {
+      createContinuationToken: dependencies.createContinuationToken,
+      youtubeCache: dependencies.youtubeCache
+    }
+  );
+}
+
+function buildSearchPage(
+  response: SearchFeedLike,
+  request: InitialSearchRequest,
+  dependencies: {
+    createContinuationToken: () => string;
+    youtubeCache: YouTubeCache;
+  }
+): YouTubeSearchPage {
+  const nextPageToken = cacheSearchContinuation(response, request, dependencies);
+  const page = normalizeSearchPage(response, request);
+
+  return nextPageToken ? { ...page, nextPageToken } : page;
+}
+
+function cacheSearchContinuation(
+  response: SearchFeedLike,
+  request: InitialSearchRequest,
+  dependencies: {
+    createContinuationToken: () => string;
+    youtubeCache: YouTubeCache;
+  }
+): string | undefined {
+  if (!response.has_continuation) {
+    return undefined;
+  }
+
+  const token = dependencies.createContinuationToken();
+
+  dependencies.youtubeCache.setContinuation<SearchContinuationState>(
+    token,
+    {
+      query: request.query,
+      ...(request.filters ? { filters: request.filters } : {}),
+      response
+    },
+    SEARCH_TTL_MS
+  );
+
+  return token;
+}
+
+function normalizeSearchQuery(input: YouTubeSearchQuery): NormalizedSearchRequest {
+  const maxResults = normalizeMaxResults(input.maxResults);
+
+  if ("pageToken" in input) {
+    const pageToken = input.pageToken.trim();
+
+    if (!pageToken) {
+      throw new InvalidInputError(
+        "Provide a non-empty `pageToken` string to request the next search page."
+      );
+    }
+
+    return {
+      kind: "continuation",
+      pageToken,
+      maxResults
+    };
+  }
+
   const query = input.query.trim();
 
   if (!query) {
@@ -290,15 +446,8 @@ function normalizeSearchQuery(input: YouTubeSearchQuery): YouTubeSearchQuery {
     );
   }
 
-  const maxResults = input.maxResults ?? DEFAULT_SEARCH_RESULTS;
-
-  if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
-    throw new InvalidInputError(
-      `\`maxResults\` must be between 1 and ${MAX_SEARCH_RESULTS}.`
-    );
-  }
-
   return {
+    kind: "initial",
     query,
     maxResults,
     ...(input.filters
@@ -320,8 +469,24 @@ function normalizeSearchQuery(input: YouTubeSearchQuery): YouTubeSearchQuery {
   };
 }
 
-function createSearchCacheKey(query: YouTubeSearchQuery): string {
-  return `search:${query.query}:max=${query.maxResults ?? DEFAULT_SEARCH_RESULTS}:filters=${JSON.stringify(query.filters ?? {})}`;
+function normalizeMaxResults(maxResults: number | undefined): number {
+  const resolvedMaxResults = maxResults ?? DEFAULT_SEARCH_RESULTS;
+
+  if (
+    !Number.isInteger(resolvedMaxResults) ||
+    resolvedMaxResults < 1 ||
+    resolvedMaxResults > MAX_SEARCH_RESULTS
+  ) {
+    throw new InvalidInputError(
+      `\`maxResults\` must be between 1 and ${MAX_SEARCH_RESULTS}.`
+    );
+  }
+
+  return resolvedMaxResults;
+}
+
+function createSearchCacheKey(query: InitialSearchRequest): string {
+  return `search:${query.query}:max=${query.maxResults}:filters=${JSON.stringify(query.filters ?? {})}`;
 }
 
 function dedupeFeatures(

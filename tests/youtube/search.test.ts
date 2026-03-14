@@ -141,6 +141,7 @@ describe("youtube search normalization", () => {
 
 describe("youtube search service", () => {
   it("executes search through the wrapped client and returns normalized first-page results", async () => {
+    const createContinuationToken = vi.fn().mockReturnValue("page-1");
     const upstream = {
       getBasicInfo: vi.fn(),
       getPlaylist: vi.fn(),
@@ -167,7 +168,9 @@ describe("youtube search service", () => {
             is_live: false,
             is_upcoming: false
           }
-        ]
+        ],
+        has_continuation: true,
+        getContinuation: vi.fn()
       })
     };
     const service = createYouTubeService({
@@ -176,6 +179,7 @@ describe("youtube search service", () => {
         getConfig: vi.fn().mockReturnValue({}),
         reset: vi.fn()
       },
+      createContinuationToken,
       logger: createSilentLogger()
     });
 
@@ -198,6 +202,7 @@ describe("youtube search service", () => {
         sortBy: "view_count",
         features: ["live", "hd"]
       },
+      nextPageToken: "page-1",
       results: [
         {
           kind: "video",
@@ -223,6 +228,7 @@ describe("youtube search service", () => {
       sort_by: "view_count",
       features: ["live", "hd"]
     });
+    expect(createContinuationToken).toHaveBeenCalledTimes(1);
   });
 
   it("uses the default first-page size when maxResults is omitted", async () => {
@@ -251,5 +257,72 @@ describe("youtube search service", () => {
 
     expect(page.pageSize).toBe(DEFAULT_SEARCH_RESULTS);
     expect(page.results).toHaveLength(DEFAULT_SEARCH_RESULTS);
+  });
+
+  it("issues opaque continuation tokens that resolve follow-up pages", async () => {
+    const secondPage = {
+      videos: [
+        {
+          video_id: "9bZkp7q19f0",
+          title: "Video two",
+          thumbnails: [{ url: "https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg" }]
+        }
+      ],
+      has_continuation: false,
+      getContinuation: vi.fn()
+    };
+    const firstPage = {
+      videos: [
+        {
+          video_id: "dQw4w9WgXcQ",
+          title: "Video one",
+          thumbnails: [{ url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }]
+        }
+      ],
+      has_continuation: true,
+      getContinuation: vi.fn().mockResolvedValue(secondPage)
+    };
+    const upstream = {
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn(),
+      search: vi.fn().mockResolvedValue(firstPage)
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      createContinuationToken: vi
+        .fn()
+        .mockReturnValueOnce("page-1")
+        .mockReturnValueOnce("page-2"),
+      logger: createSilentLogger()
+    });
+
+    const initialPage = await service.searchVideos({ query: "mcp server", maxResults: 1 });
+    const followUpPage = await service.searchVideos({
+      pageToken: initialPage.nextPageToken ?? ""
+    });
+
+    expect(initialPage.nextPageToken).toBe("page-1");
+    expect(followUpPage).toEqual({
+      query: "mcp server",
+      pageSize: 1,
+      results: [
+        {
+          kind: "video",
+          id: "9bZkp7q19f0",
+          canonicalUrl: "https://www.youtube.com/watch?v=9bZkp7q19f0",
+          title: "Video two",
+          thumbnails: ["https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg"],
+          isLive: false,
+          isUpcoming: false
+        }
+      ]
+    });
+    expect(firstPage.getContinuation).toHaveBeenCalledTimes(1);
+    expect(upstream.search).toHaveBeenCalledTimes(1);
   });
 });

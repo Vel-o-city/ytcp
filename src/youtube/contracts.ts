@@ -105,11 +105,19 @@ export type YouTubeSearchFilters = {
   features?: YouTubeSearchFeature[];
 };
 
-export type YouTubeSearchQuery = {
-  query: string;
-  maxResults?: number;
-  filters?: YouTubeSearchFilters;
-};
+export type YouTubeSearchQuery =
+  | {
+      query: string;
+      pageToken?: never;
+      maxResults?: number;
+      filters?: YouTubeSearchFilters;
+    }
+  | {
+      pageToken: string;
+      query?: never;
+      maxResults?: number;
+      filters?: never;
+    };
 
 export type YouTubeSearchResult = {
   kind: "video";
@@ -134,6 +142,7 @@ export type YouTubeSearchPage = {
   estimatedResults?: number;
   refinements?: string[];
   filters?: YouTubeSearchFilters;
+  nextPageToken?: string;
   results: YouTubeSearchResult[];
 };
 
