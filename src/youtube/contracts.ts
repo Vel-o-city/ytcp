@@ -24,6 +24,12 @@ export type YouTubeChannelInput = string | YouTubeChannelLookup;
 export const DEFAULT_SEARCH_RESULTS = 5;
 export const MAX_SEARCH_RESULTS = 10;
 
+export type YouTubeVideoChapter = {
+  title: string;
+  startTimeSeconds: number;
+  thumbnailUrl?: string;
+};
+
 export type YouTubeVideoRecord = {
   kind: "video";
   id: string;
@@ -38,8 +44,12 @@ export type YouTubeVideoRecord = {
   likeCount?: number;
   thumbnails: string[];
   keywords?: string[];
+  category?: string;
+  isFamilySafe?: boolean;
+  isUnlisted?: boolean;
   isLive?: boolean;
   isUpcoming?: boolean;
+  chapters?: YouTubeVideoChapter[];
   playlistId?: string;
   startTimeSeconds?: number;
 };

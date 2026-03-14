@@ -3,6 +3,7 @@ import type {
   YouTubeSearchPage,
   YouTubeSearchQuery,
   YouTubeSearchResult,
+  YouTubeVideoChapter,
   YouTubeChannelLookup,
   YouTubeChannelRecord,
   YouTubePlaylistLookup,
@@ -24,6 +25,7 @@ export function normalizeVideoRecord(
 ): YouTubeVideoRecord {
   const basicInfo = asRecord(getValue(response, "basic_info"));
   const channel = asRecord(getValue(basicInfo, "channel"));
+  const chapters = extractVideoChapters(response);
 
   return {
     kind: "video",
@@ -48,11 +50,15 @@ export function normalizeVideoRecord(
     likeCount: pickNumber(getValue(basicInfo, "like_count")),
     thumbnails: extractThumbnailUrls(getValue(basicInfo, "thumbnail")),
     keywords: extractTextList(getValue(basicInfo, "keywords")),
+    category: pickText(getValue(basicInfo, "category")),
+    isFamilySafe: pickBoolean(getValue(basicInfo, "is_family_safe")),
+    isUnlisted: pickBoolean(getValue(basicInfo, "is_unlisted")),
     isLive: pickBoolean(
       getValue(basicInfo, "is_live"),
       getValue(basicInfo, "is_live_content")
     ),
     isUpcoming: pickBoolean(getValue(basicInfo, "is_upcoming")),
+    ...(chapters ? { chapters } : {}),
     ...(reference.playlistId ? { playlistId: reference.playlistId } : {}),
     ...(typeof reference.startTimeSeconds === "number"
       ? { startTimeSeconds: reference.startTimeSeconds }
@@ -288,6 +294,54 @@ function extractTextList(value: unknown): string[] | undefined {
     .filter((item): item is string => Boolean(item));
 
   return values.length > 0 ? values : undefined;
+}
+
+function extractVideoChapters(value: unknown): YouTubeVideoChapter[] | undefined {
+  const markers = getValue(
+    getValue(
+      getValue(getValue(value, "player_overlays"), "decorated_player_bar"),
+      "player_bar"
+    ),
+    "markers_map"
+  );
+
+  if (!Array.isArray(markers)) {
+    return undefined;
+  }
+
+  const chapters = markers
+    .flatMap(marker => {
+      const chapterNodes = getValue(asRecord(marker)?.value, "chapters");
+
+      return Array.isArray(chapterNodes) ? chapterNodes : [];
+    })
+    .map(chapter => normalizeVideoChapter(chapter))
+    .filter((chapter): chapter is YouTubeVideoChapter => Boolean(chapter));
+
+  return chapters.length > 0 ? chapters : undefined;
+}
+
+function normalizeVideoChapter(value: unknown): YouTubeVideoChapter | null {
+  const chapter = asRecord(value);
+
+  if (!chapter) {
+    return null;
+  }
+
+  const title = pickText(getValue(chapter, "title"));
+  const startMillis = pickNumber(getValue(chapter, "time_range_start_millis"));
+
+  if (!title || typeof startMillis !== "number") {
+    return null;
+  }
+
+  const thumbnailUrl = extractThumbnailUrls(getValue(chapter, "thumbnail"))[0];
+
+  return {
+    title,
+    startTimeSeconds: Math.max(0, Math.floor(startMillis / 1000)),
+    ...(thumbnailUrl ? { thumbnailUrl } : {})
+  };
 }
 
 function extractSearchResults(value: unknown): YouTubeSearchResult[] {

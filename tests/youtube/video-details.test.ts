@@ -28,7 +28,37 @@ describe("video detail lookups", () => {
           thumbnail: [
             { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }
           ],
+          category: "Education",
+          is_family_safe: true,
+          is_unlisted: false,
           is_live: false
+        },
+        player_overlays: {
+          decorated_player_bar: {
+            player_bar: {
+              markers_map: [
+                {
+                  value: {
+                    chapters: [
+                      {
+                        title: "Introduction",
+                        time_range_start_millis: 0,
+                        thumbnail: [
+                          {
+                            url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/chapter1.jpg"
+                          }
+                        ]
+                      },
+                      {
+                        title: "Shared server wiring",
+                        time_range_start_millis: 120000
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
         }
       }),
       getBasicInfo: vi.fn().mockResolvedValue({
@@ -69,6 +99,20 @@ describe("video detail lookups", () => {
       title: "Build an MCP Server",
       channelTitle: "Example Dev",
       durationSeconds: 754,
+      category: "Education",
+      isFamilySafe: true,
+      isUnlisted: false,
+      chapters: [
+        {
+          title: "Introduction",
+          startTimeSeconds: 0,
+          thumbnailUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/chapter1.jpg"
+        },
+        {
+          title: "Shared server wiring",
+          startTimeSeconds: 120
+        }
+      ],
       startTimeSeconds: 43
     });
     await expect(
@@ -156,6 +200,41 @@ describe("video detail lookups", () => {
         source: "id"
       })
     );
+  });
+
+  it("treats missing chapter markers as a normal empty state for otherwise valid videos", async () => {
+    const upstream = {
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: {
+          title: "No chapter video",
+          short_description: "Still valid",
+          channel: {
+            id: "UC123",
+            name: "Example Dev"
+          },
+          duration: 210,
+          is_live: false
+        }
+      }),
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await expect(service.getVideo("dQw4w9WgXcQ")).resolves.toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      title: "No chapter video"
+    });
+    await expect(service.getVideo("dQw4w9WgXcQ")).resolves.not.toHaveProperty("chapters");
   });
 
   it("rejects non-video references before calling the upstream client", async () => {
