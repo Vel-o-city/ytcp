@@ -1,16 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   type YouTubeChannelRecord,
   type YouTubePlaylistRecord,
   type YouTubeVideoRecord
 } from "../../src/youtube/contracts.js";
+import { createInnertubeClient } from "../../src/youtube/client.js";
 import {
   normalizeChannelRecord,
   normalizePlaylistRecord,
   normalizeVideoRecord
 } from "../../src/youtube/normalize.js";
 import { parseYouTubeInput } from "../../src/youtube/parser.js";
+import { createYouTubeService } from "../../src/youtube/service.js";
+
+function createSilentLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  };
+}
 
 describe("youtube normalization contracts", () => {
   it("normalizes compact video details into a stable record shape", () => {
@@ -143,5 +154,151 @@ describe("youtube normalization contracts", () => {
       viewCountText: "210M views",
       thumbnails: ["https://yt3.googleusercontent.com/channel-avatar=s88"]
     });
+  });
+});
+
+describe("createInnertubeClient", () => {
+  it("reuses one youtubei session and forwards the configured seams", async () => {
+    const upstream = {
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const createClient = vi.fn().mockResolvedValue(upstream);
+    const customFetch = vi.fn();
+    const logger = createSilentLogger();
+
+    const client = createInnertubeClient({
+      createClient,
+      fetch: customFetch,
+      logger,
+      visitorData: "visitor-data",
+      poToken: "po-token",
+      userAgent: "ytcp-test-agent"
+    });
+
+    expect(await client.getClient()).toBe(upstream);
+    expect(await client.getClient()).toBe(upstream);
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fetch: customFetch,
+        visitor_data: "visitor-data",
+        po_token: "po-token",
+        user_agent: "ytcp-test-agent",
+        retrieve_player: false,
+        cache: expect.any(Object)
+      })
+    );
+  });
+});
+
+describe("createYouTubeService", () => {
+  it("uses the client boundary to return normalized video and playlist records", async () => {
+    const upstream = {
+      getBasicInfo: vi.fn().mockResolvedValue({
+        basic_info: {
+          title: "Never Gonna Give You Up",
+          short_description: "Official music video",
+          channel: {
+            id: "UCuAXFkgsw1L7xaCfnd5JJOw",
+            name: "Rick Astley"
+          },
+          duration: 213,
+          view_count: 123456789,
+          thumbnail: [
+            { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }
+          ]
+        }
+      }),
+      getPlaylist: vi.fn().mockResolvedValue({
+        info: {
+          title: "Song Queue",
+          author: {
+            id: "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+            name: "Google Developers"
+          },
+          total_items: "12 videos",
+          thumbnails: [
+            { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }
+          ]
+        }
+      }),
+      getChannel: vi.fn()
+    };
+    const logger = createSilentLogger();
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger
+    });
+
+    expect(
+      await service.getVideo("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    ).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      title: "Never Gonna Give You Up",
+      channelTitle: "Rick Astley"
+    });
+    expect(await service.getPlaylist("PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK")).toMatchObject({
+      kind: "playlist",
+      id: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+      title: "Song Queue",
+      channelTitle: "Google Developers"
+    });
+
+    expect(upstream.getBasicInfo).toHaveBeenCalledWith("dQw4w9WgXcQ");
+    expect(upstream.getPlaylist).toHaveBeenCalledWith(
+      "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK"
+    );
+  });
+
+  it("resolves handle-based channels before requesting normalized channel data", async () => {
+    const upstream = {
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn().mockResolvedValue({
+        metadata: {
+          external_id: "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+          title: "Google Developers",
+          vanity_channel_url: "https://www.youtube.com/@GoogleDevelopers"
+        }
+      }),
+      resolveURL: vi.fn().mockResolvedValue({
+        payload: {
+          browseId: "UC_x5XG1OV2P6uZZ5FSM9Ttw"
+        }
+      })
+    };
+    const logger = createSilentLogger();
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger
+    });
+
+    await expect(
+      service.getChannel("https://www.youtube.com/@GoogleDevelopers")
+    ).resolves.toMatchObject({
+      kind: "channel",
+      handle: "@GoogleDevelopers",
+      id: "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+      title: "Google Developers"
+    });
+
+    expect(upstream.resolveURL).toHaveBeenCalledWith(
+      "https://www.youtube.com/@GoogleDevelopers"
+    );
+    expect(upstream.getChannel).toHaveBeenCalledWith(
+      "UC_x5XG1OV2P6uZZ5FSM9Ttw"
+    );
   });
 });
