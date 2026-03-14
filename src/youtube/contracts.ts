@@ -21,6 +21,9 @@ export type YouTubePlaylistInput = string | YouTubePlaylistLookup;
 
 export type YouTubeChannelInput = string | YouTubeChannelLookup;
 
+export const DEFAULT_SEARCH_RESULTS = 5;
+export const MAX_SEARCH_RESULTS = 10;
+
 export type YouTubeVideoRecord = {
   kind: "video";
   id: string;
@@ -71,9 +74,73 @@ export type YouTubeChannelRecord = {
   thumbnails: string[];
 };
 
+export type YouTubeSearchUploadDate =
+  | "all"
+  | "hour"
+  | "today"
+  | "week"
+  | "month"
+  | "year";
+
+export type YouTubeSearchDuration = "all" | "short" | "medium" | "long";
+
+export type YouTubeSearchSortBy =
+  | "relevance"
+  | "rating"
+  | "upload_date"
+  | "view_count";
+
+export type YouTubeSearchFeature =
+  | "hd"
+  | "subtitles"
+  | "creative_commons"
+  | "live"
+  | "4k"
+  | "hdr";
+
+export type YouTubeSearchFilters = {
+  uploadDate?: YouTubeSearchUploadDate;
+  duration?: YouTubeSearchDuration;
+  sortBy?: YouTubeSearchSortBy;
+  features?: YouTubeSearchFeature[];
+};
+
+export type YouTubeSearchQuery = {
+  query: string;
+  maxResults?: number;
+  filters?: YouTubeSearchFilters;
+};
+
+export type YouTubeSearchResult = {
+  kind: "video";
+  id: string;
+  canonicalUrl: string;
+  title: string;
+  channelId?: string;
+  channelTitle?: string;
+  publishedText?: string;
+  viewCountText?: string;
+  durationText?: string;
+  durationSeconds?: number;
+  snippet?: string;
+  thumbnails: string[];
+  isLive: boolean;
+  isUpcoming: boolean;
+};
+
+export type YouTubeSearchPage = {
+  query: string;
+  pageSize: number;
+  estimatedResults?: number;
+  refinements?: string[];
+  filters?: YouTubeSearchFilters;
+  results: YouTubeSearchResult[];
+};
+
 export type YouTubeService = {
   parseInput: (input: string) => YouTubeLookupReference;
   getVideo: (input: YouTubeVideoInput) => Promise<YouTubeVideoRecord>;
   getPlaylist: (input: YouTubePlaylistInput) => Promise<YouTubePlaylistRecord>;
   getChannel: (input: YouTubeChannelInput) => Promise<YouTubeChannelRecord>;
+  searchVideos: (query: YouTubeSearchQuery) => Promise<YouTubeSearchPage>;
 };

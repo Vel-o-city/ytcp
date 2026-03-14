@@ -1,4 +1,10 @@
+import type { SearchFilters } from "youtubei.js";
+
 import type {
+  YouTubeSearchFilters,
+  YouTubeSearchPage,
+  YouTubeSearchQuery,
+  YouTubeSearchResult,
   YouTubeChannelLookup,
   YouTubeChannelRecord,
   YouTubePlaylistLookup,
@@ -126,6 +132,46 @@ export function normalizeChannelRecord(
   };
 }
 
+export function toInnertubeSearchFilters(
+  filters?: YouTubeSearchFilters
+): SearchFilters | undefined {
+  if (!filters) {
+    return undefined;
+  }
+
+  const normalizedFeatures = filters.features?.filter(
+    (feature, index, values) => values.indexOf(feature) === index
+  );
+
+  const mapped: SearchFilters = {
+    ...(filters.uploadDate ? { upload_date: filters.uploadDate } : {}),
+    ...(filters.duration ? { duration: filters.duration } : {}),
+    ...(filters.sortBy ? { sort_by: filters.sortBy } : {}),
+    ...(normalizedFeatures && normalizedFeatures.length > 0
+      ? { features: normalizedFeatures }
+      : {})
+  };
+
+  return Object.keys(mapped).length > 0 ? mapped : undefined;
+}
+
+export function normalizeSearchPage(
+  response: unknown,
+  query: YouTubeSearchQuery
+): YouTubeSearchPage {
+  const videos = extractSearchResults(getValue(response, "videos"));
+  const boundedResults = videos.slice(0, query.maxResults ?? videos.length);
+
+  return {
+    query: query.query,
+    pageSize: boundedResults.length,
+    estimatedResults: pickNumber(getValue(response, "estimated_results")),
+    refinements: extractTextList(getValue(response, "refinements")),
+    ...(query.filters ? { filters: query.filters } : {}),
+    results: boundedResults
+  };
+}
+
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" ? (value as UnknownRecord) : undefined;
 }
@@ -234,6 +280,55 @@ function extractTextList(value: unknown): string[] | undefined {
     .filter((item): item is string => Boolean(item));
 
   return values.length > 0 ? values : undefined;
+}
+
+function extractSearchResults(value: unknown): YouTubeSearchResult[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(item => normalizeSearchResult(item))
+    .filter((item): item is YouTubeSearchResult => Boolean(item));
+}
+
+function normalizeSearchResult(value: unknown): YouTubeSearchResult | null {
+  const item = asRecord(value);
+
+  if (!item) {
+    return null;
+  }
+
+  const id = pickText(item.video_id, item.id);
+  const title = pickText(item.title);
+
+  if (!id || !title) {
+    return null;
+  }
+
+  const author = asRecord(item.author);
+  const duration = asRecord(item.duration);
+
+  return {
+    kind: "video",
+    id,
+    canonicalUrl: `https://www.youtube.com/watch?v=${id}`,
+    title,
+    channelId: pickText(
+      getValue(author, "id"),
+      getValue(getValue(author, "endpoint"), "browseId"),
+      getValue(getValue(getValue(author, "endpoint"), "payload"), "browseId")
+    ),
+    channelTitle: pickText(getValue(author, "name"), author),
+    publishedText: pickText(item.published),
+    viewCountText: pickText(item.view_count, item.short_view_count),
+    durationText: pickText(item.length_text, getValue(duration, "text")),
+    durationSeconds: pickNumber(getValue(duration, "seconds")),
+    snippet: pickText(item.description_snippet),
+    thumbnails: extractThumbnailUrls(item.thumbnails),
+    isLive: pickBoolean(item.is_live) ?? false,
+    isUpcoming: pickBoolean(item.is_upcoming) ?? false
+  };
 }
 
 function extractThumbnailUrls(value: unknown): string[] {
