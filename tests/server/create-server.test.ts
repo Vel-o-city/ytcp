@@ -6,12 +6,14 @@ import { createServer, SERVER_INFO } from "../../src/server/create-server.js";
 describe("createServer", () => {
   it("creates the shared MCP server without transport branching", () => {
     const server = createServer();
+    const tools = (server as unknown as { _registeredTools: Record<string, unknown> })
+      ._registeredTools;
 
     expect(server).toBeInstanceOf(McpServer);
     expect(server).toBeTruthy();
     expect(server).toBeTypeOf("object");
     expect(server.isConnected()).toBe(false);
-    expect((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools).toEqual({});
+    expect(Object.keys(tools)).toEqual(["server_status"]);
     expect((server as unknown as { _registeredResources: Record<string, unknown> })._registeredResources).toEqual({});
     expect((server as unknown as { _registeredPrompts: Record<string, unknown> })._registeredPrompts).toEqual({});
     expect(SERVER_INFO).toEqual({
