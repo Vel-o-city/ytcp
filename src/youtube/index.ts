@@ -29,6 +29,7 @@ export {
   type YouTubeSearchUploadDate,
   type YouTubeService,
   type YouTubeVideoInput,
+  type YouTubeVideoChapter,
   type YouTubeVideoLookup,
   type YouTubeVideoRecord
 } from "./contracts.js";

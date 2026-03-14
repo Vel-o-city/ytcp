@@ -13,7 +13,7 @@ function createSilentLogger() {
 }
 
 describe("video detail lookups", () => {
-  it("prefers the richer video info path while resolving watch urls, shorts/live variants, mobile urls, and bare ids", async () => {
+  it("prefers the richer video info path while resolving watch urls, shorts/live/embed/music/mobile variants, and bare ids", async () => {
     const upstream = {
       getInfo: vi.fn().mockResolvedValue({
         basic_info: {
@@ -140,6 +140,23 @@ describe("video detail lookups", () => {
       source: "watch",
       canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     });
+    await expect(
+      service.getVideo("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=30")
+    ).resolves.toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "embed",
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      startTimeSeconds: 30
+    });
+    await expect(
+      service.getVideo("https://music.youtube.com/watch?v=dQw4w9WgXcQ")
+    ).resolves.toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "watch",
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
     await expect(service.getVideo("dQw4w9WgXcQ")).resolves.toMatchObject({
       kind: "video",
       id: "dQw4w9WgXcQ",
@@ -147,12 +164,13 @@ describe("video detail lookups", () => {
       canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     });
 
-    expect(upstream.getInfo).toHaveBeenCalledTimes(5);
+    expect(upstream.getInfo).toHaveBeenCalledTimes(6);
     expect(upstream.getInfo).toHaveBeenNthCalledWith(1, "dQw4w9WgXcQ");
     expect(upstream.getInfo).toHaveBeenNthCalledWith(2, "dQw4w9WgXcQ");
     expect(upstream.getInfo).toHaveBeenNthCalledWith(3, "dQw4w9WgXcQ");
     expect(upstream.getInfo).toHaveBeenNthCalledWith(4, "dQw4w9WgXcQ");
     expect(upstream.getInfo).toHaveBeenNthCalledWith(5, "dQw4w9WgXcQ");
+    expect(upstream.getInfo).toHaveBeenNthCalledWith(6, "dQw4w9WgXcQ");
     expect(upstream.getBasicInfo).not.toHaveBeenCalled();
   });
 
