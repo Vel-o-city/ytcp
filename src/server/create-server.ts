@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import type { YouTubeService } from "../youtube/contracts.js";
 import { registerPrompts } from "./register-prompts.js";
 import { registerResources } from "./register-resources.js";
 import { registerTools } from "./register-tools.js";
@@ -9,10 +10,16 @@ export const SERVER_INFO = {
   version: "0.1.0"
 } as const;
 
-export function createServer(): McpServer {
+export type CreateServerOptions = {
+  youtubeService?: Pick<YouTubeService, "searchVideos">;
+};
+
+export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO);
 
-  registerTools(server);
+  registerTools(server, {
+    youtubeService: options.youtubeService
+  });
   registerResources(server);
   registerPrompts(server);
 
