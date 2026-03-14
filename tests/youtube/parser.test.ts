@@ -10,6 +10,8 @@ import {
   normalizeYouTubeUrl,
   parseYouTubeInput
 } from "../../src/youtube/parser.js";
+import * as youtubeModule from "../../src/youtube/index.js";
+import * as rootModule from "../../src/index.js";
 
 describe("youtube reference validators", () => {
   it("accepts valid bare identifiers", () => {
@@ -112,6 +114,97 @@ describe("parseYouTubeInput", () => {
       "not a supported YouTube host"
     );
   });
+
+  it("supports shorts, live, embed, music, mobile, and thumbnail URLs", () => {
+    expect(parseYouTubeInput("https://www.youtube.com/shorts/dQw4w9WgXcQ")).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "shorts",
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+
+    expect(parseYouTubeInput("https://www.youtube.com/live/dQw4w9WgXcQ?t=120")).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "live",
+      startTimeSeconds: 120,
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+
+    expect(
+      parseYouTubeInput("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=30")
+    ).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "embed",
+      startTimeSeconds: 30,
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+
+    expect(parseYouTubeInput("https://music.youtube.com/watch?v=dQw4w9WgXcQ")).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "watch"
+    });
+
+    expect(parseYouTubeInput("https://m.youtube.com/watch?v=dQw4w9WgXcQ")).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "watch"
+    });
+
+    expect(
+      parseYouTubeInput("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
+    ).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ",
+      source: "thumbnail",
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+  });
+
+  it("supports representative playlist and channel URL families", () => {
+    expect(
+      parseYouTubeInput(
+        "https://www.youtube.com/playlist?list=PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK"
+      )
+    ).toMatchObject({
+      kind: "playlist",
+      id: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+      source: "playlist",
+      canonicalUrl:
+        "https://www.youtube.com/playlist?list=PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK"
+    });
+
+    expect(
+      parseYouTubeInput(
+        "https://www.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw/videos"
+      )
+    ).toMatchObject({
+      kind: "channel",
+      source: "channel",
+      channelId: "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+      canonicalUrl: "https://www.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw"
+    });
+
+    expect(parseYouTubeInput("https://www.youtube.com/@GoogleDevelopers/about")).toMatchObject({
+      kind: "channel",
+      source: "handle",
+      handle: "@GoogleDevelopers",
+      canonicalUrl: "https://www.youtube.com/@GoogleDevelopers"
+    });
+
+    expect(
+      parseYouTubeInput(
+        "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw"
+      )
+    ).toMatchObject({
+      kind: "channel",
+      source: "feed",
+      channelId: "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+      canonicalUrl: "https://www.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw"
+    });
+  });
 });
 
 describe("normalizeYouTubeUrl", () => {
@@ -125,6 +218,24 @@ describe("normalizeYouTubeUrl", () => {
       )
     ).toBe(
       "https://www.youtube.com/playlist?list=PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK"
+    );
+  });
+});
+
+describe("youtube module exports", () => {
+  it("re-exports the parser utilities through the youtube module surface", () => {
+    expect(youtubeModule.parseYouTubeInput).toBe(parseYouTubeInput);
+    expect(youtubeModule.normalizeYouTubeUrl).toBe(normalizeYouTubeUrl);
+    expect(youtubeModule.isVideoId("dQw4w9WgXcQ")).toBe(true);
+  });
+
+  it("re-exports the youtube module surface from the package entry", () => {
+    expect(rootModule.parseYouTubeInput("dQw4w9WgXcQ")).toMatchObject({
+      kind: "video",
+      id: "dQw4w9WgXcQ"
+    });
+    expect(rootModule.normalizeYouTubeUrl("https://youtu.be/dQw4w9WgXcQ")).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     );
   });
 });
