@@ -505,8 +505,10 @@ function asTranscriptSource(
     );
   }
 
+  const getTranscript = candidate.getTranscript as () => Promise<unknown>;
+
   return {
-    getTranscript: () => candidate.getTranscript!()
+    getTranscript: () => getTranscript()
   };
 }
 
@@ -553,8 +555,12 @@ async function requestTranscriptLanguage(
     );
   }
 
+  const selectLanguage = selectable.selectLanguage as (
+    language: string
+  ) => Promise<unknown>;
+
   return policy.execute(
-    () => selectable.selectLanguage!(language),
+    () => selectLanguage(language),
     {
       label: "transcript language lookup",
       target: `${videoId}:${language}`

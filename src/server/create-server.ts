@@ -11,7 +11,9 @@ export const SERVER_INFO = {
 } as const;
 
 export type CreateServerOptions = {
-  youtubeService?: Partial<Pick<YouTubeService, "getVideo" | "searchVideos">>;
+  youtubeService?: Partial<
+    Pick<YouTubeService, "getVideo" | "searchVideos" | "getTranscript">
+  >;
 };
 
 export function createServer(options: CreateServerOptions = {}): McpServer {

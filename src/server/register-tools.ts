@@ -13,6 +13,9 @@ import {
   type YouTubeSearchPage,
   type YouTubeSearchResult,
   type YouTubeSearchQuery,
+  type YouTubeTranscriptRecord,
+  type YouTubeTranscriptSegment,
+  type YouTubeTranscriptLanguage,
   type YouTubeVideoChapter,
   type YouTubeVideoRecord,
   type YouTubeService
@@ -21,7 +24,9 @@ import { createYouTubeService } from "../youtube/service.js";
 import { SERVER_INFO } from "./create-server.js";
 
 export type RegisterToolDependencies = {
-  youtubeService?: Partial<Pick<YouTubeService, "getVideo" | "searchVideos">>;
+  youtubeService?: Partial<
+    Pick<YouTubeService, "getVideo" | "searchVideos" | "getTranscript">
+  >;
 };
 
 const MAX_VIDEO_DESCRIPTION_LENGTH = 600;
@@ -56,18 +61,28 @@ const getVideoDetailsInputSchema = z
     video: z.string().trim().min(1).max(500)
   })
   .strict();
+const getTranscriptInputSchema = z
+  .object({
+    video: z.string().trim().min(1).max(500),
+    language: z.string().trim().min(1).max(100).optional()
+  })
+  .strict();
 
 export function registerTools(
   _server: McpServer,
   dependencies: RegisterToolDependencies = {}
 ): void {
   const defaultYouTubeService =
-    dependencies.youtubeService?.getVideo && dependencies.youtubeService?.searchVideos
+    dependencies.youtubeService?.getVideo &&
+    dependencies.youtubeService?.searchVideos &&
+    dependencies.youtubeService?.getTranscript
       ? undefined
       : createYouTubeService();
   const searchVideos =
     dependencies.youtubeService?.searchVideos ?? defaultYouTubeService?.searchVideos;
   const getVideo = dependencies.youtubeService?.getVideo ?? defaultYouTubeService?.getVideo;
+  const getTranscript =
+    dependencies.youtubeService?.getTranscript ?? defaultYouTubeService?.getTranscript;
 
   _server.registerTool(
     "server_status",
@@ -138,6 +153,42 @@ export function registerTools(
   );
 
   _server.registerTool(
+    "get_transcript",
+    {
+      description:
+        "Fetch a public YouTube transcript from a canonical video URL or bare 11-character ID, with optional language selection.",
+      inputSchema: getTranscriptInputSchema.shape,
+      annotations: {
+        readOnlyHint: true
+      }
+    },
+    async args => {
+      try {
+        if (!getTranscript) {
+          throw new NotAvailableError(
+            "Transcript retrieval is not configured for this ytcp build.",
+            {
+              cause: "transcript_lookup_unconfigured"
+            }
+          );
+        }
+
+        const input = parseGetTranscriptInput(args);
+        const record = await getTranscript(input.video, {
+          ...(input.language ? { language: input.language } : {})
+        });
+
+        return createSuccessResult({
+          summary: summarizeTranscriptRecord(record),
+          data: shapeTranscriptRecordData(record)
+        });
+      } catch (error) {
+        return createResultFromError(error);
+      }
+    }
+  );
+
+  _server.registerTool(
     "search_videos",
     {
       description:
@@ -180,6 +231,33 @@ function parseGetVideoDetailsInput(input: unknown): string {
   }
 
   return parsed.data.video.trim();
+}
+
+function parseGetTranscriptInput(input: unknown): {
+  video: string;
+  language?: string;
+} {
+  const parsed = getTranscriptInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const path = firstIssue?.path.join(".") ?? "video";
+
+    if (path === "language") {
+      throw new InvalidInputError(
+        "Provide a non-empty `language` string when requesting a transcript language."
+      );
+    }
+
+    throw new InvalidInputError(
+      "Provide a YouTube video URL or bare 11-character video ID in `video`."
+    );
+  }
+
+  return {
+    video: parsed.data.video.trim(),
+    ...(parsed.data.language ? { language: parsed.data.language.trim() } : {})
+  };
 }
 
 function parseSearchVideosInput(input: unknown): YouTubeSearchQuery {
@@ -296,6 +374,14 @@ function summarizeVideoRecord(record: YouTubeVideoRecord): string {
   return `Loaded public video details for ${record.id}.`;
 }
 
+function summarizeTranscriptRecord(record: YouTubeTranscriptRecord): string {
+  if (record.title) {
+    return `Loaded public transcript for "${record.title}" in ${record.language}.`;
+  }
+
+  return `Loaded public transcript for ${record.videoId} in ${record.language}.`;
+}
+
 function shapeSearchPageData(page: YouTubeSearchPage): Record<string, unknown> {
   return {
     query: page.query,
@@ -339,11 +425,48 @@ function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknow
   };
 }
 
+function shapeTranscriptRecordData(record: YouTubeTranscriptRecord): Record<string, unknown> {
+  return {
+    id: record.videoId,
+    canonicalUrl: record.canonicalUrl,
+    ...(record.title ? { title: record.title } : {}),
+    ...(record.channelTitle ? { channelTitle: record.channelTitle } : {}),
+    language: record.language,
+    languages: record.languages.map(shapeTranscriptLanguageData),
+    segmentCount: record.segmentCount,
+    text: record.text,
+    segments: record.segments.map(shapeTranscriptSegmentData)
+  };
+}
+
 function shapeVideoChapterData(chapter: YouTubeVideoChapter): Record<string, unknown> {
   return {
     title: chapter.title,
     startTimeSeconds: chapter.startTimeSeconds,
     ...(chapter.thumbnailUrl ? { thumbnailUrl: chapter.thumbnailUrl } : {})
+  };
+}
+
+function shapeTranscriptLanguageData(
+  language: YouTubeTranscriptLanguage
+): Record<string, unknown> {
+  return {
+    label: language.label,
+    ...(language.languageCode ? { languageCode: language.languageCode } : {}),
+    isSelected: language.isSelected,
+    ...(language.isAutoGenerated ? { isAutoGenerated: true } : {}),
+    ...(language.isTranslatable ? { isTranslatable: true } : {})
+  };
+}
+
+function shapeTranscriptSegmentData(
+  segment: YouTubeTranscriptSegment
+): Record<string, unknown> {
+  return {
+    startTimeText: segment.startTimeText,
+    startTimeSeconds: segment.startTimeSeconds,
+    endTimeSeconds: segment.endTimeSeconds,
+    text: segment.text
   };
 }
 
