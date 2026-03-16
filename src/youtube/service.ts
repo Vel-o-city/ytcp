@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import { createLogger, type Logger } from "../lib/logger.js";
-import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
+import {
+  InvalidInputError,
+  NotAvailableError,
+  UpstreamUnavailableError
+} from "../lib/mcp-errors.js";
 
 import {
   DEFAULT_SEARCH_RESULTS,
@@ -14,6 +18,8 @@ import {
   type YouTubeSearchPage,
   type YouTubeSearchQuery,
   type YouTubeService,
+  type YouTubeTranscriptOptions,
+  type YouTubeTranscriptRecord,
   type YouTubeVideoInput,
   type YouTubeVideoLookup,
   type YouTubeVideoRecord,
@@ -32,6 +38,7 @@ import {
   normalizeChannelRecord,
   normalizePlaylistRecord,
   normalizeSearchPage,
+  normalizeTranscriptRecord,
   toInnertubeSearchFilters,
   normalizeVideoRecord
 } from "./normalize.js";
@@ -75,6 +82,7 @@ type ContinuationSearchRequest = {
 type NormalizedSearchRequest = InitialSearchRequest | ContinuationSearchRequest;
 
 const SEARCH_TTL_MS = 2 * 60 * 1000;
+const TRANSCRIPT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function createYouTubeService(
   options: CreateYouTubeServiceOptions = {}
@@ -228,6 +236,56 @@ export function createYouTubeService(
       });
 
       return youtubeCache.setLookup(cacheKey, page, SEARCH_TTL_MS);
+    },
+    getTranscript: async (
+      input: YouTubeVideoInput,
+      options: YouTubeTranscriptOptions = {}
+    ): Promise<YouTubeTranscriptRecord> => {
+      const reference = expectReferenceKind(input, parser, "video");
+      const requestedLanguage = normalizeTranscriptLanguageOption(options.language);
+      const cacheKey = createTranscriptCacheKey(reference, requestedLanguage);
+      const cached = youtubeCache.getLookup<YouTubeTranscriptRecord>(cacheKey);
+
+      if (cached) {
+        logger.debug("youtube transcript cache hit", {
+          id: reference.id,
+          language: requestedLanguage ?? cached.language
+        });
+        return cached;
+      }
+
+      const upstream = await client.getClient();
+
+      logger.debug("fetching youtube transcript", {
+        id: reference.id,
+        source: reference.source,
+        language: requestedLanguage
+      });
+
+      const response = await getTranscriptLookupResponse(
+        upstream,
+        reference,
+        policy
+      );
+      const transcript = await getPrimaryTranscript(
+        response,
+        reference,
+        requestedLanguage,
+        policy
+      );
+      const record = normalizeTranscriptRecord(transcript, reference, response);
+      const resolvedCacheKey = createTranscriptCacheKey(reference, record.language);
+      const cachedRecord = youtubeCache.setLookup(
+        resolvedCacheKey,
+        record,
+        TRANSCRIPT_TTL_MS
+      );
+
+      if (resolvedCacheKey !== cacheKey) {
+        youtubeCache.setLookup(cacheKey, cachedRecord, TRANSCRIPT_TTL_MS);
+      }
+
+      return cachedRecord;
     }
   };
 }
@@ -352,6 +410,224 @@ async function getVideoLookupResponse(
       target: reference.id
     }
   );
+}
+
+async function getTranscriptLookupResponse(
+  client: InnertubeClientLike,
+  reference: YouTubeVideoLookup,
+  policy: YouTubeRequestPolicy
+): Promise<unknown> {
+  if (!client.getInfo) {
+    throw new NotAvailableError(
+      "This YouTube client does not support public transcript lookups.",
+      {
+        cause: "transcript_unsupported"
+      }
+    );
+  }
+
+  return policy.execute(
+    () => client.getInfo!(reference.id),
+    {
+      label: "transcript video lookup",
+      target: reference.id
+    }
+  );
+}
+
+async function getPrimaryTranscript(
+  response: unknown,
+  reference: YouTubeVideoLookup,
+  requestedLanguage: string | undefined,
+  policy: YouTubeRequestPolicy
+): Promise<unknown> {
+  const transcriptSource = asTranscriptSource(response, reference);
+  let transcript = await requestPrimaryTranscript(transcriptSource, reference, policy);
+
+  if (requestedLanguage) {
+    const availableLanguages = normalizeTranscriptRecord(
+      transcript,
+      reference,
+      response
+    ).languages;
+    const resolvedLanguage = resolveRequestedTranscriptLanguage(
+      requestedLanguage,
+      availableLanguages,
+      reference.id
+    );
+
+    if (resolvedLanguage !== pickTranscriptSelectedLanguage(transcript)) {
+      transcript = await requestTranscriptLanguage(
+        transcript,
+        resolvedLanguage,
+        reference.id,
+        policy
+      );
+    }
+  }
+
+  const record = normalizeTranscriptRecord(transcript, reference, response);
+
+  if (record.segmentCount === 0 || !record.text.trim()) {
+    throw new NotAvailableError(
+      "No public transcript is available for this video.",
+      {
+        cause: "transcript_unavailable",
+        details: {
+          videoId: reference.id
+        }
+      }
+    );
+  }
+
+  return transcript;
+}
+
+function asTranscriptSource(
+  value: unknown,
+  reference: YouTubeVideoLookup
+): {
+  getTranscript: () => Promise<unknown>;
+} {
+  const candidate = value as {
+    getTranscript?: unknown;
+  };
+
+  if (typeof candidate?.getTranscript !== "function") {
+    throw new UpstreamUnavailableError(
+      "Primary transcript lookup is temporarily unavailable for this video.",
+      {
+        cause: "transcript_primary_unavailable",
+        details: {
+          videoId: reference.id
+        }
+      }
+    );
+  }
+
+  return {
+    getTranscript: () => candidate.getTranscript!()
+  };
+}
+
+async function requestPrimaryTranscript(
+  source: {
+    getTranscript: () => Promise<unknown>;
+  },
+  reference: YouTubeVideoLookup,
+  policy: YouTubeRequestPolicy
+): Promise<unknown> {
+  try {
+    return await policy.execute(
+      () => source.getTranscript(),
+      {
+        label: "transcript lookup",
+        target: reference.id
+      }
+    );
+  } catch (error) {
+    throw remapTranscriptLookupError(error, reference.id);
+  }
+}
+
+async function requestTranscriptLanguage(
+  transcript: unknown,
+  language: string,
+  videoId: string,
+  policy: YouTubeRequestPolicy
+): Promise<unknown> {
+  const selectable = transcript as {
+    selectLanguage?: unknown;
+  };
+
+  if (typeof selectable?.selectLanguage !== "function") {
+    throw new UpstreamUnavailableError(
+      "Primary transcript language selection is temporarily unavailable.",
+      {
+        cause: "transcript_language_selection_unavailable",
+        details: {
+          videoId,
+          language
+        }
+      }
+    );
+  }
+
+  return policy.execute(
+    () => selectable.selectLanguage!(language),
+    {
+      label: "transcript language lookup",
+      target: `${videoId}:${language}`
+    }
+  );
+}
+
+function resolveRequestedTranscriptLanguage(
+  requestedLanguage: string,
+  languages: YouTubeTranscriptRecord["languages"],
+  videoId: string
+): string {
+  const normalizedRequestedLanguage = normalizeLanguageToken(requestedLanguage);
+  const match = languages.find(language => {
+    const labelMatches =
+      normalizeLanguageToken(language.label) === normalizedRequestedLanguage;
+    const codeMatches =
+      typeof language.languageCode === "string" &&
+      normalizeLanguageToken(language.languageCode) === normalizedRequestedLanguage;
+
+    return labelMatches || codeMatches;
+  });
+
+  if (!match) {
+    throw new NotAvailableError(
+      `Transcript language "${requestedLanguage}" is not available for this video.`,
+      {
+        cause: "transcript_language_unavailable",
+        details: {
+          videoId,
+          language: requestedLanguage,
+          availableLanguages: languages.map(language => language.label)
+        }
+      }
+    );
+  }
+
+  return match.label;
+}
+
+function pickTranscriptSelectedLanguage(value: unknown): string | undefined {
+  const transcript = asRecord(value);
+
+  return typeof transcript?.selectedLanguage === "string"
+    ? transcript.selectedLanguage
+    : undefined;
+}
+
+function remapTranscriptLookupError(error: unknown, videoId: string): Error {
+  if (!(error instanceof NotAvailableError)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+
+  const message = `${error.message} ${error.causeDetail ?? ""}`.toLocaleLowerCase();
+
+  if (
+    message.includes("transcript") ||
+    message.includes("engagement panel") ||
+    message.includes("transcript panel") ||
+    message.includes("basic video info")
+  ) {
+    return new NotAvailableError(
+      "No public transcript is available for this video.",
+      {
+        cause: "transcript_unavailable",
+        details: {
+          videoId
+        }
+      }
+    );
+  }
+
+  return error;
 }
 
 async function getSearchContinuationPage(
@@ -514,6 +790,33 @@ function normalizeMaxResults(maxResults: number | undefined): number {
 
 function createSearchCacheKey(query: InitialSearchRequest): string {
   return `search:${query.query}:max=${query.maxResults}:filters=${JSON.stringify(query.filters ?? {})}`;
+}
+
+function createTranscriptCacheKey(
+  reference: YouTubeVideoLookup,
+  language: string | undefined
+): string {
+  return `transcript:${reference.id}:source=${reference.source}:language=${normalizeLanguageToken(language ?? "default")}`;
+}
+
+function normalizeTranscriptLanguageOption(language: string | undefined): string | undefined {
+  if (typeof language !== "string") {
+    return undefined;
+  }
+
+  const trimmed = language.trim();
+
+  if (!trimmed) {
+    throw new InvalidInputError(
+      "Provide a non-empty `language` string when requesting a transcript language."
+    );
+  }
+
+  return trimmed;
+}
+
+function normalizeLanguageToken(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function dedupeFeatures(

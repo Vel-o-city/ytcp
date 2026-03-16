@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { NotAvailableError } from "../../src/lib/mcp-errors.js";
 import { type YouTubeTranscriptRecord } from "../../src/youtube/contracts.js";
+import { createYouTubeService } from "../../src/youtube/service.js";
 import { normalizeTranscriptRecord } from "../../src/youtube/normalize.js";
 import { parseYouTubeInput } from "../../src/youtube/parser.js";
 import type { YouTubeVideoReference } from "../../src/youtube/reference.js";
@@ -13,6 +15,15 @@ function expectVideoReference(value: ReturnType<typeof parseYouTubeInput>): YouT
   }
 
   return value;
+}
+
+function createSilentLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  };
 }
 
 describe("youtube transcript normalization", () => {
@@ -181,5 +192,261 @@ describe("youtube transcript normalization", () => {
       }
     ]);
     expect(record.text).toBe("Hola mundo");
+  });
+});
+
+describe("youtube transcript service", () => {
+  it("retrieves public transcripts from rich video info for urls and bare ids", async () => {
+    const mediaInfo = {
+      basic_info: {
+        title: "Build an MCP Server",
+        channel: {
+          name: "Example Dev"
+        }
+      },
+      captions: {
+        caption_tracks: [
+          {
+            name: { text: "English" },
+            language_code: "en",
+            kind: "asr",
+            is_translatable: true
+          }
+        ]
+      },
+      getTranscript: vi.fn().mockResolvedValue({
+        languages: ["English"],
+        selectedLanguage: "English",
+        transcript: {
+          content: {
+            body: {
+              initial_segments: [
+                {
+                  start_ms: "0",
+                  end_ms: "1200",
+                  start_time_text: { text: "0:00" },
+                  snippet: { text: "Hello world" }
+                }
+              ]
+            }
+          }
+        }
+      })
+    };
+    const upstream = {
+      getInfo: vi.fn().mockResolvedValue(mediaInfo),
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await expect(
+      service.getTranscript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    ).resolves.toMatchObject({
+      kind: "transcript",
+      videoId: "dQw4w9WgXcQ",
+      canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      source: "watch",
+      title: "Build an MCP Server",
+      channelTitle: "Example Dev",
+      language: "English",
+      segmentCount: 1,
+      text: "Hello world"
+    });
+    await expect(service.getTranscript("dQw4w9WgXcQ")).resolves.toMatchObject({
+      kind: "transcript",
+      videoId: "dQw4w9WgXcQ",
+      source: "id",
+      language: "English"
+    });
+
+    expect(upstream.getInfo).toHaveBeenCalledTimes(2);
+    expect(mediaInfo.getTranscript).toHaveBeenCalledTimes(2);
+    expect(upstream.getBasicInfo).not.toHaveBeenCalled();
+  });
+
+  it("selects an alternate transcript language by label or language code", async () => {
+    const germanTranscript = {
+      languages: ["English", "Deutsch"],
+      selectedLanguage: "Deutsch",
+      transcript: {
+        content: {
+          body: {
+            initial_segments: [
+              {
+                start_ms: "0",
+                end_ms: "2000",
+                start_time_text: { text: "0:00" },
+                snippet: { text: "Hallo Welt" }
+              }
+            ]
+          }
+        }
+      }
+    };
+    const englishTranscript = {
+      languages: ["English", "Deutsch"],
+      selectedLanguage: "English",
+      transcript: {
+        content: {
+          body: {
+            initial_segments: [
+              {
+                start_ms: "0",
+                end_ms: "1500",
+                start_time_text: { text: "0:00" },
+                snippet: { text: "Hello world" }
+              }
+            ]
+          }
+        }
+      },
+      selectLanguage: vi.fn().mockImplementation(async language => {
+        expect(language).toBe("Deutsch");
+        return germanTranscript;
+      })
+    };
+    const upstream = {
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: {
+          title: "Language-aware video"
+        },
+        captions: {
+          caption_tracks: [
+            {
+              name: { text: "English" },
+              language_code: "en",
+              is_translatable: true
+            },
+            {
+              name: { text: "Deutsch" },
+              language_code: "de",
+              is_translatable: true
+            }
+          ]
+        },
+        getTranscript: vi.fn().mockResolvedValue(englishTranscript)
+      }),
+      getBasicInfo: vi.fn(),
+      getPlaylist: vi.fn(),
+      getChannel: vi.fn()
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue(upstream),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await expect(
+      service.getTranscript("dQw4w9WgXcQ", { language: "de" })
+    ).resolves.toMatchObject({
+      language: "Deutsch",
+      text: "Hallo Welt"
+    });
+
+    expect(englishTranscript.selectLanguage).toHaveBeenCalledWith("Deutsch");
+  });
+
+  it("returns typed not-available failures for missing transcripts and missing languages", async () => {
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getInfo: vi.fn().mockResolvedValue({
+            captions: {
+              caption_tracks: [
+                {
+                  name: { text: "English" },
+                  language_code: "en"
+                }
+              ]
+            },
+            getTranscript: vi
+              .fn()
+              .mockRejectedValue(new Error("Transcript panel is unavailable"))
+          }),
+          getBasicInfo: vi.fn(),
+          getPlaylist: vi.fn(),
+          getChannel: vi.fn()
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+    const languageService = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getInfo: vi.fn().mockResolvedValue({
+            captions: {
+              caption_tracks: [
+                {
+                  name: { text: "English" },
+                  language_code: "en"
+                }
+              ]
+            },
+            getTranscript: vi.fn().mockResolvedValue({
+              languages: ["English"],
+              selectedLanguage: "English",
+              transcript: {
+                content: {
+                  body: {
+                    initial_segments: [
+                      {
+                        start_ms: "0",
+                        end_ms: "1200",
+                        start_time_text: { text: "0:00" },
+                        snippet: { text: "Hello world" }
+                      }
+                    ]
+                  }
+                }
+              }
+            })
+          }),
+          getBasicInfo: vi.fn(),
+          getPlaylist: vi.fn(),
+          getChannel: vi.fn()
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await expect(service.getTranscript("dQw4w9WgXcQ")).rejects.toEqual(
+      new NotAvailableError("No public transcript is available for this video.", {
+        cause: "transcript_unavailable",
+        details: {
+          videoId: "dQw4w9WgXcQ"
+        }
+      })
+    );
+    await expect(
+      languageService.getTranscript("dQw4w9WgXcQ", { language: "fr" })
+    ).rejects.toEqual(
+      new NotAvailableError(
+        'Transcript language "fr" is not available for this video.',
+        {
+          cause: "transcript_language_unavailable",
+          details: {
+            videoId: "dQw4w9WgXcQ",
+            language: "fr",
+            availableLanguages: ["English"]
+          }
+        }
+      )
+    );
   });
 });
