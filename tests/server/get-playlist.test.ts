@@ -97,6 +97,7 @@ describe("get_playlist tool", () => {
   });
 
   it("keeps the playlist payload compact and surfaces unavailable states cleanly", async () => {
+    const longDescription = "A".repeat(420);
     const server = createServer({
       youtubeService: {
         getPlaylist: vi
@@ -109,6 +110,7 @@ describe("get_playlist tool", () => {
             source: "id",
             channelId: "UC_x5XG1OV2P6uZZ5FSM9Ttw",
             title: "Song Queue",
+            description: longDescription,
             itemCountText: "12 videos",
             thumbnails: []
           })
@@ -140,6 +142,7 @@ describe("get_playlist tool", () => {
       title: "Song Queue",
       itemCountText: "12 videos"
     });
+    expect(success.structuredContent.data.description).toBe(`${"A".repeat(397)}...`);
     expect(success.structuredContent.data).not.toHaveProperty("source");
     expect(success.structuredContent.data).not.toHaveProperty("channelId");
 
