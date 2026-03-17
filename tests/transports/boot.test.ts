@@ -107,6 +107,9 @@ describe("root transport boot surface", () => {
       createStreamableHttpRuntime
     );
     expect(rootExports.createYouTubeService).toBeDefined();
+    expect(rootExports.createTranscriptFallbackAdapter).toBeDefined();
+    expect(rootExports.normalizeTranscriptRecord).toBeDefined();
+    expect(rootExports.formatTranscriptText).toBeDefined();
     expect(rootExports.normalizeVideoRecord).toBeDefined();
     expect(rootExports.normalizeSearchPage).toBeDefined();
     expect(rootExports.DEFAULT_SEARCH_RESULTS).toBe(5);
@@ -132,6 +135,36 @@ describe("root transport boot surface", () => {
           {
             title: "Introduction",
             startTimeSeconds: 0
+          }
+        ]
+      }),
+      getTranscript: vi.fn().mockResolvedValue({
+        kind: "transcript",
+        videoId: "dQw4w9WgXcQ",
+        canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        source: "watch",
+        title: "Build an MCP Server",
+        channelTitle: "Example Dev",
+        language: "English",
+        includeTimestamps: true,
+        retrievalMethod: "fallback",
+        languages: [
+          {
+            label: "English",
+            languageCode: "en",
+            isSelected: true
+          }
+        ],
+        segmentCount: 1,
+        text: "0:00 Hello world",
+        segments: [
+          {
+            startMs: 0,
+            endMs: 1000,
+            startTimeSeconds: 0,
+            endTimeSeconds: 1,
+            startTimeText: "0:00",
+            text: "Hello world"
           }
         ]
       }),
@@ -173,8 +206,17 @@ describe("root transport boot surface", () => {
         _registeredTools: Record<string, RegisteredTool>;
       }
     )._registeredTools.get_video_details;
+    const transcriptTool = (
+      stdioRuntime.server as unknown as {
+        _registeredTools: Record<string, RegisteredTool>;
+      }
+    )._registeredTools.get_transcript;
     const stdioResult = await tool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+    const stdioTranscriptResult = await transcriptTool.handler({
+      video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      includeTimestamps: true
     });
 
     await httpRuntime.handleRequest(
@@ -187,12 +229,22 @@ describe("root transport boot surface", () => {
         _registeredTools: Record<string, RegisteredTool>;
       }
     )._registeredTools.get_video_details;
+    const httpTranscriptTool = (
+      createdServers[1] as unknown as {
+        _registeredTools: Record<string, RegisteredTool>;
+      }
+    )._registeredTools.get_transcript;
     const httpResult = await httpTool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+    const httpTranscriptResult = await httpTranscriptTool.handler({
+      video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      includeTimestamps: true
     });
 
     expect(serverFactory).toHaveBeenCalledTimes(2);
     expect(stdioResult).toEqual(httpResult);
+    expect(stdioTranscriptResult).toEqual(httpTranscriptResult);
     expect(httpResult).toEqual(
       createSuccessResult({
         summary: 'Loaded public video details for "Build an MCP Server".',
@@ -216,6 +268,38 @@ describe("root transport boot surface", () => {
         }
       })
     );
+    expect(httpTranscriptResult).toEqual(
+      createSuccessResult({
+        summary:
+          'Loaded public transcript for "Build an MCP Server" in English. Fallback extractor used.',
+        data: {
+          id: "dQw4w9WgXcQ",
+          canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          title: "Build an MCP Server",
+          channelTitle: "Example Dev",
+          language: "English",
+          includeTimestamps: true,
+          retrievalMethod: "fallback",
+          languages: [
+            {
+              label: "English",
+              languageCode: "en",
+              isSelected: true
+            }
+          ],
+          segmentCount: 1,
+          text: "0:00 Hello world",
+          segments: [
+            {
+              startTimeText: "0:00",
+              startTimeSeconds: 0,
+              endTimeSeconds: 1,
+              text: "Hello world"
+            }
+          ]
+        }
+      })
+    );
     expect(youtubeService.getVideo).toHaveBeenNthCalledWith(
       1,
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -223,6 +307,20 @@ describe("root transport boot surface", () => {
     expect(youtubeService.getVideo).toHaveBeenNthCalledWith(
       2,
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    );
+    expect(youtubeService.getTranscript).toHaveBeenNthCalledWith(
+      1,
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      {
+        includeTimestamps: true
+      }
+    );
+    expect(youtubeService.getTranscript).toHaveBeenNthCalledWith(
+      2,
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      {
+        includeTimestamps: true
+      }
     );
 
     await httpRuntime.close();
