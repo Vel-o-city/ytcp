@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { NotAvailableError } from "../../src/lib/mcp-errors.js";
 import { type YouTubeTranscriptRecord } from "../../src/youtube/contracts.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
-import { normalizeTranscriptRecord } from "../../src/youtube/normalize.js";
+import {
+  formatTranscriptText,
+  normalizeTranscriptRecord
+} from "../../src/youtube/normalize.js";
 import { parseYouTubeInput } from "../../src/youtube/parser.js";
 import type { YouTubeVideoReference } from "../../src/youtube/reference.js";
 
@@ -107,6 +110,8 @@ describe("youtube transcript normalization", () => {
           isTranslatable: true
         }
       ],
+      includeTimestamps: false,
+      retrievalMethod: "primary",
       segmentCount: 2,
       segments: [
         {
@@ -193,6 +198,66 @@ describe("youtube transcript normalization", () => {
     ]);
     expect(record.text).toBe("Hola mundo");
   });
+
+  it("formats timestamp-on and timestamp-off transcript text from the same segments", () => {
+    const record = normalizeTranscriptRecord(
+      {
+        languages: ["English"],
+        selectedLanguage: "English",
+        transcript: {
+          content: {
+            body: {
+              initial_segments: [
+                {
+                  start_ms: "0",
+                  end_ms: "2100",
+                  start_time_text: { text: "0:00" },
+                  snippet: { text: "Hello world" }
+                },
+                {
+                  start_ms: "2100",
+                  end_ms: "4800",
+                  start_time_text: { text: "0:02" },
+                  snippet: { text: "Build with MCP" }
+                }
+              ]
+            }
+          }
+        }
+      },
+      expectVideoReference(parseYouTubeInput("dQw4w9WgXcQ"))
+    );
+
+    expect(formatTranscriptText(record.segments)).toBe("Hello world\nBuild with MCP");
+    expect(
+      formatTranscriptText(record.segments, { includeTimestamps: true })
+    ).toBe("0:00 Hello world\n0:02 Build with MCP");
+    expect(
+      normalizeTranscriptRecord(
+        {
+          languages: ["English"],
+          selectedLanguage: "English",
+          transcript: {
+            content: {
+              body: {
+                initial_segments: [
+                  {
+                    start_ms: "0",
+                    end_ms: "2100",
+                    start_time_text: { text: "0:00" },
+                    snippet: { text: "Hello world" }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        expectVideoReference(parseYouTubeInput("dQw4w9WgXcQ")),
+        undefined,
+        { includeTimestamps: true }
+      ).text
+    ).toBe("0:00 Hello world");
+  });
 });
 
 describe("youtube transcript service", () => {
@@ -258,6 +323,8 @@ describe("youtube transcript service", () => {
       title: "Build an MCP Server",
       channelTitle: "Example Dev",
       language: "English",
+      includeTimestamps: false,
+      retrievalMethod: "primary",
       segmentCount: 1,
       text: "Hello world"
     });
@@ -352,6 +419,8 @@ describe("youtube transcript service", () => {
       service.getTranscript("dQw4w9WgXcQ", { language: "de" })
     ).resolves.toMatchObject({
       language: "Deutsch",
+      includeTimestamps: false,
+      retrievalMethod: "primary",
       text: "Hallo Welt"
     });
 

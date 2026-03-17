@@ -4,6 +4,7 @@ import type {
   YouTubeSearchQuery,
   YouTubeSearchResult,
   YouTubeTranscriptLanguage,
+  YouTubeTranscriptRetrievalMethod,
   YouTubeTranscriptRecord,
   YouTubeTranscriptSegment,
   YouTubeVideoChapter,
@@ -192,10 +193,12 @@ export function normalizeSearchPage(
 export function normalizeTranscriptRecord(
   transcript: unknown,
   reference: YouTubeVideoLookup,
-  videoResponse?: unknown
+  videoResponse?: unknown,
+  options: {
+    includeTimestamps?: boolean;
+    retrievalMethod?: YouTubeTranscriptRetrievalMethod;
+  } = {}
 ): YouTubeTranscriptRecord {
-  const basicInfo = asRecord(getValue(videoResponse, "basic_info"));
-  const channel = asRecord(getValue(basicInfo, "channel"));
   const segments = extractTranscriptSegments(transcript);
   const languages = extractTranscriptLanguages(
     transcript,
@@ -206,19 +209,77 @@ export function normalizeTranscriptRecord(
     languages.find(language => language.isSelected)?.label ??
     "Unknown";
 
-  return {
-    kind: "transcript",
-    videoId: reference.id,
-    canonicalUrl: reference.canonicalUrl,
-    source: reference.source,
-    title: pickText(getValue(basicInfo, "title")),
-    channelTitle: pickText(getValue(channel, "name"), getValue(basicInfo, "author")),
+  return createTranscriptRecord({
+    reference,
+    videoResponse,
     language: selectedLanguage,
     languages,
-    segmentCount: segments.length,
     segments,
-    text: renderTranscriptText(segments)
+    includeTimestamps: options.includeTimestamps,
+    retrievalMethod: options.retrievalMethod
+  });
+}
+
+export function createTranscriptRecord(options: {
+  reference: YouTubeVideoLookup;
+  videoResponse?: unknown;
+  language: string;
+  languages: YouTubeTranscriptLanguage[];
+  segments: YouTubeTranscriptSegment[];
+  includeTimestamps?: boolean;
+  retrievalMethod?: YouTubeTranscriptRetrievalMethod;
+}): YouTubeTranscriptRecord {
+  const basicInfo = asRecord(getValue(options.videoResponse, "basic_info"));
+  const channel = asRecord(getValue(basicInfo, "channel"));
+
+  return {
+    kind: "transcript",
+    videoId: options.reference.id,
+    canonicalUrl: options.reference.canonicalUrl,
+    source: options.reference.source,
+    title: pickText(getValue(basicInfo, "title")),
+    channelTitle: pickText(
+      getValue(channel, "name"),
+      getValue(basicInfo, "author")
+    ),
+    language: options.language,
+    languages: options.languages,
+    includeTimestamps: options.includeTimestamps ?? false,
+    retrievalMethod: options.retrievalMethod ?? "primary",
+    segmentCount: options.segments.length,
+    segments: options.segments,
+    text: formatTranscriptText(options.segments, {
+      includeTimestamps: options.includeTimestamps
+    })
   };
+}
+
+export function formatTranscriptText(
+  segments: YouTubeTranscriptSegment[],
+  options: {
+    includeTimestamps?: boolean;
+  } = {}
+): string {
+  if (options.includeTimestamps) {
+    return segments
+      .map(segment => `${segment.startTimeText} ${segment.text}`)
+      .join("\n");
+  }
+
+  return segments.map(segment => segment.text).join("\n");
+}
+
+export function formatTranscriptTimestamp(totalSeconds: number): string {
+  const boundedSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(boundedSeconds / 3600);
+  const minutes = Math.floor((boundedSeconds % 3600) / 60);
+  const seconds = boundedSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function asRecord(value: unknown): UnknownRecord | undefined {
@@ -483,10 +544,6 @@ function extractTranscriptLanguages(
   }
 
   return [...languages.values()];
-}
-
-function renderTranscriptText(segments: YouTubeTranscriptSegment[]): string {
-  return segments.map(segment => segment.text).join("\n");
 }
 
 function extractSearchResults(value: unknown): YouTubeSearchResult[] {

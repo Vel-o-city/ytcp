@@ -173,6 +173,8 @@ export type YouTubeTranscriptLanguage = {
   isTranslatable?: boolean;
 };
 
+export type YouTubeTranscriptRetrievalMethod = "primary" | "fallback";
+
 export type YouTubeTranscriptRecord = {
   kind: "transcript";
   videoId: string;
@@ -182,6 +184,8 @@ export type YouTubeTranscriptRecord = {
   channelTitle?: string;
   language: string;
   languages: YouTubeTranscriptLanguage[];
+  includeTimestamps: boolean;
+  retrievalMethod: YouTubeTranscriptRetrievalMethod;
   segmentCount: number;
   segments: YouTubeTranscriptSegment[];
   text: string;
