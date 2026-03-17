@@ -54,6 +54,7 @@ import {
   createTranscriptFallbackAdapter,
   type TranscriptFallbackAdapter
 } from "./transcript-fallback.js";
+import { createCanonicalPlaylistUrl } from "./reference.js";
 
 export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   client?: InnertubeClientHandle;
@@ -132,7 +133,7 @@ export function createYouTubeService(
     getPlaylist: async (
       input: YouTubePlaylistInput
     ): Promise<YouTubePlaylistRecord> => {
-      const reference = expectReferenceKind(input, parser, "playlist");
+      const reference = expectPlaylistReference(input, parser);
       const cacheKey = createCacheKey(reference);
       const cached = youtubeCache.getLookup<YouTubePlaylistRecord>(cacheKey);
 
@@ -326,6 +327,32 @@ function expectReferenceKind<TKind extends ParsedYouTubeReference["kind"]>(
   }
 
   return reference as Extract<ParsedYouTubeReference, { kind: TKind }>;
+}
+
+function expectPlaylistReference(
+  input: YouTubePlaylistInput,
+  parser: (input: string) => ParsedYouTubeReference
+): YouTubePlaylistLookup {
+  const reference = typeof input === "string" ? parser(input) : input;
+
+  if (reference.kind === "playlist") {
+    return reference;
+  }
+
+  if (reference.kind === "video" && reference.playlistId) {
+    return {
+      kind: "playlist",
+      id: reference.playlistId,
+      input: reference.input,
+      source: "watch",
+      canonicalUrl: createCanonicalPlaylistUrl(reference.playlistId),
+      videoId: reference.id
+    };
+  }
+
+  throw new InvalidInputError(
+    `Expected a YouTube playlist reference, but received a ${reference.kind} reference instead.`
+  );
 }
 
 async function resolveChannelTarget(
