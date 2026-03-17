@@ -7,7 +7,10 @@ import {
 } from "../contracts/tool-result.js";
 import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
 import {
+  MAX_PLAYLIST_RESULTS,
   MAX_SEARCH_RESULTS,
+  type YouTubePlaylistItem,
+  type YouTubePlaylistQuery,
   type YouTubePlaylistRecord,
   type YouTubeSearchFeature,
   type YouTubeSearchFilters,
@@ -65,7 +68,9 @@ const getVideoDetailsInputSchema = z
   .strict();
 const getPlaylistInputSchema = z
   .object({
-    playlist: z.string().trim().min(1).max(500)
+    playlist: z.string().trim().min(1).max(500).optional(),
+    pageToken: z.string().trim().min(1).max(200).optional(),
+    maxResults: z.number().int().min(1).max(MAX_PLAYLIST_RESULTS).optional()
   })
   .strict();
 const getTranscriptInputSchema = z
@@ -167,7 +172,7 @@ export function registerTools(
     "get_playlist",
     {
       description:
-        "Fetch compact metadata for a public YouTube playlist from a canonical playlist URL, a watch URL with `list=...`, or a bare playlist ID.",
+        "Fetch compact details and playlist items for a public YouTube playlist from a canonical playlist URL, a watch URL with `list=...`, or a bare playlist ID.",
       inputSchema: getPlaylistInputSchema.shape,
       annotations: {
         readOnlyHint: true
@@ -281,16 +286,60 @@ function parseGetVideoDetailsInput(input: unknown): string {
   return parsed.data.video.trim();
 }
 
-function parseGetPlaylistInput(input: unknown): string {
+function parseGetPlaylistInput(input: unknown): YouTubePlaylistQuery {
   const parsed = getPlaylistInputSchema.safeParse(input);
 
   if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const path = firstIssue?.path.join(".") ?? "playlist";
+
+    if (path === "pageToken") {
+      throw new InvalidInputError(
+        "Provide a non-empty `pageToken` string to request the next playlist page."
+      );
+    }
+
+    if (path === "maxResults") {
+      throw new InvalidInputError(
+        `\`maxResults\` must be between 1 and ${MAX_PLAYLIST_RESULTS}.`
+      );
+    }
+
     throw new InvalidInputError(
       "Provide a YouTube playlist URL, a watch URL with `list=...`, or a bare playlist ID in `playlist`."
     );
   }
 
-  return parsed.data.playlist.trim();
+  const hasPlaylist = typeof parsed.data.playlist === "string";
+  const hasPageToken = typeof parsed.data.pageToken === "string";
+
+  if (!hasPlaylist && !hasPageToken) {
+    throw new InvalidInputError(
+      "Provide either a `playlist` string or a `pageToken` string to load a public playlist."
+    );
+  }
+
+  if (hasPlaylist && hasPageToken) {
+    throw new InvalidInputError(
+      "Provide either `playlist` or `pageToken`, not both, when using `get_playlist`."
+    );
+  }
+
+  if (hasPageToken) {
+    return {
+      pageToken: parsed.data.pageToken!.trim(),
+      ...(typeof parsed.data.maxResults === "number"
+        ? { maxResults: parsed.data.maxResults }
+        : {})
+    };
+  }
+
+  return {
+    playlist: parsed.data.playlist!.trim(),
+    ...(typeof parsed.data.maxResults === "number"
+      ? { maxResults: parsed.data.maxResults }
+      : {})
+  };
 }
 
 function parseGetTranscriptInput(input: unknown): {
@@ -445,11 +494,21 @@ function summarizeVideoRecord(record: YouTubeVideoRecord): string {
 }
 
 function summarizePlaylistRecord(record: YouTubePlaylistRecord): string {
-  if (record.title) {
-    return `Loaded public playlist details for "${record.title}".`;
+  const label = record.title ? `"${record.title}"` : record.id;
+
+  if (record.pageSize === 0) {
+    return `Loaded public playlist details for ${label}. No playlist items were returned for this page.`;
   }
 
-  return `Loaded public playlist details for ${record.id}.`;
+  if (record.title) {
+    return `Loaded public playlist details for "${record.title}" with ${record.pageSize} item${
+      record.pageSize === 1 ? "" : "s"
+    }.${record.nextPageToken ? " More are available." : ""}`;
+  }
+
+  return `Loaded public playlist details for ${record.id} with ${record.pageSize} item${
+    record.pageSize === 1 ? "" : "s"
+  }.${record.nextPageToken ? " More are available." : ""}`;
 }
 
 function summarizeTranscriptRecord(record: YouTubeTranscriptRecord): string {
@@ -529,7 +588,10 @@ function shapePlaylistRecordData(record: YouTubePlaylistRecord): Record<string, 
     ...(record.privacy ? { privacy: record.privacy } : {}),
     ...(record.viewCountText ? { viewCountText: record.viewCountText } : {}),
     ...(record.lastUpdatedText ? { lastUpdatedText: record.lastUpdatedText } : {}),
-    ...(record.thumbnails.length > 0 ? { thumbnails: record.thumbnails } : {})
+    ...(record.thumbnails.length > 0 ? { thumbnails: record.thumbnails } : {}),
+    pageSize: record.pageSize,
+    ...(record.nextPageToken ? { nextPageToken: record.nextPageToken } : {}),
+    items: record.items.map(shapePlaylistItemData)
   };
 }
 
@@ -577,6 +639,22 @@ function shapeTranscriptSegmentData(
     startTimeSeconds: segment.startTimeSeconds,
     endTimeSeconds: segment.endTimeSeconds,
     text: segment.text
+  };
+}
+
+function shapePlaylistItemData(item: YouTubePlaylistItem): Record<string, unknown> {
+  return {
+    kind: item.kind,
+    id: item.id,
+    canonicalUrl: item.canonicalUrl,
+    title: item.title,
+    ...(item.channelTitle ? { channelTitle: item.channelTitle } : {}),
+    ...(item.durationText ? { durationText: item.durationText } : {}),
+    ...(typeof item.position === "number" ? { position: item.position } : {}),
+    ...(item.thumbnails.length > 0 ? { thumbnails: item.thumbnails } : {}),
+    isPlayable: item.isPlayable,
+    isLive: item.isLive,
+    isUpcoming: item.isUpcoming
   };
 }
 
