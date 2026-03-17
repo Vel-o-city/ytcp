@@ -9,15 +9,19 @@ export {
   type YouTubeVideoReference
 } from "./reference.js";
 export {
+  DEFAULT_PLAYLIST_RESULTS,
   DEFAULT_SEARCH_RESULTS,
+  MAX_PLAYLIST_RESULTS,
   MAX_SEARCH_RESULTS,
   type YouTubeChannelInput,
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
   type YouTubeLookupInput,
   type YouTubeLookupReference,
+  type YouTubePlaylistItem,
   type YouTubePlaylistInput,
   type YouTubePlaylistLookup,
+  type YouTubePlaylistQuery,
   type YouTubePlaylistRecord,
   type YouTubeSearchDuration,
   type YouTubeSearchFeature,

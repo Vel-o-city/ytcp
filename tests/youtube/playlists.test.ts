@@ -4,6 +4,8 @@ import { InvalidInputError, NotAvailableError } from "../../src/lib/mcp-errors.j
 import { normalizePlaylistRecord } from "../../src/youtube/normalize.js";
 import { parseYouTubeInput } from "../../src/youtube/parser.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
+import * as rootModule from "../../src/index.js";
+import * as youtubeModule from "../../src/youtube/index.js";
 import type { YouTubePlaylistRecord } from "../../src/youtube/contracts.js";
 import type { YouTubePlaylistReference } from "../../src/youtube/reference.js";
 
@@ -348,5 +350,18 @@ describe("playlist lookups", () => {
       )
     );
     expect(upstream.getPlaylist).not.toHaveBeenCalled();
+  });
+});
+
+describe("playlist exports", () => {
+  it("re-exports the playlist helpers through the youtube module and package root", () => {
+    expect(youtubeModule.normalizePlaylistRecord).toBe(normalizePlaylistRecord);
+    expect(youtubeModule.createYouTubeService).toBe(createYouTubeService);
+    expect(youtubeModule.DEFAULT_PLAYLIST_RESULTS).toBe(10);
+    expect(youtubeModule.MAX_PLAYLIST_RESULTS).toBe(25);
+    expect(rootModule.normalizePlaylistRecord).toBe(normalizePlaylistRecord);
+    expect(rootModule.createYouTubeService).toBe(createYouTubeService);
+    expect(rootModule.DEFAULT_PLAYLIST_RESULTS).toBe(10);
+    expect(rootModule.MAX_PLAYLIST_RESULTS).toBe(25);
   });
 });
