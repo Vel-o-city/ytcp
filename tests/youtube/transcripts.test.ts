@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { NotAvailableError } from "../../src/lib/mcp-errors.js";
+import {
+  NotAvailableError,
+  UpstreamUnavailableError
+} from "../../src/lib/mcp-errors.js";
 import { type YouTubeTranscriptRecord } from "../../src/youtube/contracts.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
 import {
@@ -427,7 +430,90 @@ describe("youtube transcript service", () => {
     expect(englishTranscript.selectLanguage).toHaveBeenCalledWith("Deutsch");
   });
 
+  it("falls back to the secondary extractor and keeps timestamp formatting stable", async () => {
+    const transcriptFallback = {
+      getTranscript: vi.fn().mockResolvedValue({
+        languageCode: "de",
+        languageLabel: "Deutsch",
+        segments: [
+          {
+            startMs: 0,
+            endMs: 2000,
+            startTimeSeconds: 0,
+            endTimeSeconds: 2,
+            startTimeText: "0:00",
+            text: "Hallo Welt"
+          }
+        ]
+      })
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getInfo: vi.fn().mockResolvedValue({
+            basic_info: {
+              title: "Fallback video"
+            },
+            captions: {
+              caption_tracks: [
+                {
+                  name: { text: "English" },
+                  language_code: "en"
+                },
+                {
+                  name: { text: "Deutsch" },
+                  language_code: "de"
+                }
+              ]
+            },
+            getTranscript: vi.fn().mockRejectedValue(
+              new UpstreamUnavailableError(
+                "Primary transcript lookup is temporarily unavailable."
+              )
+            )
+          }),
+          getBasicInfo: vi.fn(),
+          getPlaylist: vi.fn(),
+          getChannel: vi.fn()
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger(),
+      transcriptFallback
+    });
+
+    await expect(
+      service.getTranscript("dQw4w9WgXcQ", {
+        language: "de",
+        includeTimestamps: true
+      })
+    ).resolves.toMatchObject({
+      language: "Deutsch",
+      includeTimestamps: true,
+      retrievalMethod: "fallback",
+      text: "0:00 Hallo Welt"
+    });
+
+    expect(transcriptFallback.getTranscript).toHaveBeenCalledWith({
+      videoId: "dQw4w9WgXcQ",
+      languageCode: "de",
+      languageLabel: "Deutsch"
+    });
+  });
+
   it("returns typed not-available failures for missing transcripts and missing languages", async () => {
+    const transcriptFallback = {
+      getTranscript: vi.fn().mockRejectedValue(
+        new NotAvailableError("No public transcript is available for this video.", {
+          cause: "transcript_unavailable",
+          details: {
+            videoId: "dQw4w9WgXcQ",
+            fallback: true
+          }
+        })
+      )
+    };
     const service = createYouTubeService({
       client: {
         getClient: vi.fn().mockResolvedValue({
@@ -451,7 +537,8 @@ describe("youtube transcript service", () => {
         getConfig: vi.fn().mockReturnValue({}),
         reset: vi.fn()
       },
-      logger: createSilentLogger()
+      logger: createSilentLogger(),
+      transcriptFallback
     });
     const languageService = createYouTubeService({
       client: {
@@ -491,14 +578,16 @@ describe("youtube transcript service", () => {
         getConfig: vi.fn().mockReturnValue({}),
         reset: vi.fn()
       },
-      logger: createSilentLogger()
+      logger: createSilentLogger(),
+      transcriptFallback
     });
 
     await expect(service.getTranscript("dQw4w9WgXcQ")).rejects.toEqual(
       new NotAvailableError("No public transcript is available for this video.", {
         cause: "transcript_unavailable",
         details: {
-          videoId: "dQw4w9WgXcQ"
+          videoId: "dQw4w9WgXcQ",
+          fallback: true
         }
       })
     );
@@ -517,5 +606,6 @@ describe("youtube transcript service", () => {
         }
       )
     );
+    expect(transcriptFallback.getTranscript).toHaveBeenCalledTimes(1);
   });
 });

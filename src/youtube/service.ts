@@ -35,6 +35,8 @@ import {
 } from "./client.js";
 import { createYouTubeCache, type YouTubeCache } from "./cache.js";
 import {
+  createTranscriptRecord,
+  formatTranscriptText,
   normalizeChannelRecord,
   normalizePlaylistRecord,
   normalizeSearchPage,
@@ -48,6 +50,10 @@ import {
 } from "./policies.js";
 import { parseYouTubeInput } from "./parser.js";
 import type { ParsedYouTubeReference } from "./reference.js";
+import {
+  createTranscriptFallbackAdapter,
+  type TranscriptFallbackAdapter
+} from "./transcript-fallback.js";
 
 export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   client?: InnertubeClientHandle;
@@ -55,6 +61,7 @@ export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   logger?: Logger;
   parser?: (input: string) => ParsedYouTubeReference;
   policy?: YouTubeRequestPolicy;
+  transcriptFallback?: TranscriptFallbackAdapter;
   youtubeCache?: YouTubeCache;
 };
 
@@ -92,6 +99,8 @@ export function createYouTubeService(
   const parser = options.parser ?? parseYouTubeInput;
   const youtubeCache = options.youtubeCache ?? createYouTubeCache();
   const policy = options.policy ?? createYouTubeRequestPolicy();
+  const transcriptFallback =
+    options.transcriptFallback ?? createTranscriptFallbackAdapter();
   const client =
     options.client ??
     createInnertubeClient({
@@ -243,15 +252,17 @@ export function createYouTubeService(
     ): Promise<YouTubeTranscriptRecord> => {
       const reference = expectReferenceKind(input, parser, "video");
       const requestedLanguage = normalizeTranscriptLanguageOption(options.language);
+      const includeTimestamps = options.includeTimestamps === true;
       const cacheKey = createTranscriptCacheKey(reference, requestedLanguage);
       const cached = youtubeCache.getLookup<YouTubeTranscriptRecord>(cacheKey);
 
       if (cached) {
         logger.debug("youtube transcript cache hit", {
           id: reference.id,
-          language: requestedLanguage ?? cached.language
+          language: requestedLanguage ?? cached.language,
+          includeTimestamps
         });
-        return cached;
+        return applyTranscriptFormat(cached, includeTimestamps);
       }
 
       const upstream = await client.getClient();
@@ -259,7 +270,8 @@ export function createYouTubeService(
       logger.debug("fetching youtube transcript", {
         id: reference.id,
         source: reference.source,
-        language: requestedLanguage
+        language: requestedLanguage,
+        includeTimestamps
       });
 
       const response = await getTranscriptLookupResponse(
@@ -267,17 +279,27 @@ export function createYouTubeService(
         reference,
         policy
       );
-      const transcript = await getPrimaryTranscript(
+      const transcriptLanguageCatalog = getTranscriptLanguageCatalog(
         response,
         reference,
-        requestedLanguage,
-        policy
+        requestedLanguage
       );
-      const record = normalizeTranscriptRecord(transcript, reference, response);
+      const record = await getTranscriptRecord(
+        response,
+        reference,
+        {
+          requestedLanguage,
+          includeTimestamps,
+          languageCatalog: transcriptLanguageCatalog,
+          logger,
+          policy,
+          transcriptFallback
+        }
+      );
       const resolvedCacheKey = createTranscriptCacheKey(reference, record.language);
       const cachedRecord = youtubeCache.setLookup(
         resolvedCacheKey,
-        record,
+        applyTranscriptFormat(record, false),
         TRANSCRIPT_TTL_MS
       );
 
@@ -285,7 +307,7 @@ export function createYouTubeService(
         youtubeCache.setLookup(cacheKey, cachedRecord, TRANSCRIPT_TTL_MS);
       }
 
-      return cachedRecord;
+      return applyTranscriptFormat(cachedRecord, includeTimestamps);
     }
   };
 }
@@ -435,10 +457,61 @@ async function getTranscriptLookupResponse(
   );
 }
 
+async function getTranscriptRecord(
+  response: unknown,
+  reference: YouTubeVideoLookup,
+  dependencies: {
+    requestedLanguage: string | undefined;
+    includeTimestamps: boolean;
+    languageCatalog: YouTubeTranscriptRecord["languages"];
+    logger: Logger;
+    policy: YouTubeRequestPolicy;
+    transcriptFallback: TranscriptFallbackAdapter;
+  }
+): Promise<YouTubeTranscriptRecord> {
+  try {
+    const transcript = await getPrimaryTranscript(
+      response,
+      reference,
+      dependencies.requestedLanguage,
+      dependencies.languageCatalog,
+      dependencies.policy
+    );
+
+    return ensureTranscriptRecord(
+      normalizeTranscriptRecord(transcript, reference, response, {
+        includeTimestamps: dependencies.includeTimestamps,
+        retrievalMethod: "primary"
+      }),
+      reference.id
+    );
+  } catch (error) {
+    if (!shouldTryTranscriptFallback(error)) {
+      throw error;
+    }
+
+    dependencies.logger.warn(
+      "youtube primary transcript lookup fell back to secondary extractor",
+      {
+        id: reference.id,
+        error: error instanceof Error ? error.message : String(error),
+        requestedLanguage: dependencies.requestedLanguage
+      }
+    );
+
+    return getFallbackTranscriptRecord(
+      response,
+      reference,
+      dependencies
+    );
+  }
+}
+
 async function getPrimaryTranscript(
   response: unknown,
   reference: YouTubeVideoLookup,
   requestedLanguage: string | undefined,
+  languageCatalog: YouTubeTranscriptRecord["languages"],
   policy: YouTubeRequestPolicy
 ): Promise<unknown> {
   const transcriptSource = asTranscriptSource(response, reference);
@@ -452,32 +525,18 @@ async function getPrimaryTranscript(
     ).languages;
     const resolvedLanguage = resolveRequestedTranscriptLanguage(
       requestedLanguage,
-      availableLanguages,
+      availableLanguages.length > 0 ? availableLanguages : languageCatalog,
       reference.id
     );
 
-    if (resolvedLanguage !== pickTranscriptSelectedLanguage(transcript)) {
+    if (resolvedLanguage.label !== pickTranscriptSelectedLanguage(transcript)) {
       transcript = await requestTranscriptLanguage(
         transcript,
-        resolvedLanguage,
+        resolvedLanguage.label,
         reference.id,
         policy
       );
     }
-  }
-
-  const record = normalizeTranscriptRecord(transcript, reference, response);
-
-  if (record.segmentCount === 0 || !record.text.trim()) {
-    throw new NotAvailableError(
-      "No public transcript is available for this video.",
-      {
-        cause: "transcript_unavailable",
-        details: {
-          videoId: reference.id
-        }
-      }
-    );
   }
 
   return transcript;
@@ -572,7 +631,7 @@ function resolveRequestedTranscriptLanguage(
   requestedLanguage: string,
   languages: YouTubeTranscriptRecord["languages"],
   videoId: string
-): string {
+): YouTubeTranscriptRecord["languages"][number] {
   const normalizedRequestedLanguage = normalizeLanguageToken(requestedLanguage);
   const match = languages.find(language => {
     const labelMatches =
@@ -598,7 +657,7 @@ function resolveRequestedTranscriptLanguage(
     );
   }
 
-  return match.label;
+  return match;
 }
 
 function pickTranscriptSelectedLanguage(value: unknown): string | undefined {
@@ -634,6 +693,186 @@ function remapTranscriptLookupError(error: unknown, videoId: string): Error {
   }
 
   return error;
+}
+
+function shouldTryTranscriptFallback(error: unknown): boolean {
+  if (error instanceof InvalidInputError) {
+    return false;
+  }
+
+  if (error instanceof UpstreamUnavailableError) {
+    return true;
+  }
+
+  return (
+    error instanceof NotAvailableError &&
+    error.causeDetail === "transcript_unavailable"
+  );
+}
+
+async function getFallbackTranscriptRecord(
+  response: unknown,
+  reference: YouTubeVideoLookup,
+  dependencies: {
+    requestedLanguage: string | undefined;
+    includeTimestamps: boolean;
+    languageCatalog: YouTubeTranscriptRecord["languages"];
+    transcriptFallback: TranscriptFallbackAdapter;
+  }
+): Promise<YouTubeTranscriptRecord> {
+  const requestedLanguage = toFallbackRequestedLanguage(
+    dependencies.requestedLanguage,
+    dependencies.languageCatalog,
+    reference.id
+  );
+  const fallbackTranscript = await dependencies.transcriptFallback.getTranscript({
+    videoId: reference.id,
+    ...(requestedLanguage?.languageCode
+      ? { languageCode: requestedLanguage.languageCode }
+      : {}),
+    ...(requestedLanguage?.label ? { languageLabel: requestedLanguage.label } : {})
+  });
+  const selectedLanguage = fallbackTranscript.languageLabel ??
+    requestedLanguage?.label ??
+    dependencies.requestedLanguage ??
+    "Fallback";
+  const selectedLanguageCode =
+    fallbackTranscript.languageCode ?? requestedLanguage?.languageCode;
+  const languages = buildFallbackLanguageCatalog(
+    dependencies.languageCatalog,
+    selectedLanguage,
+    selectedLanguageCode
+  );
+
+  return ensureTranscriptRecord(
+    createTranscriptRecord({
+      reference,
+      videoResponse: response,
+      language: selectedLanguage,
+      languages,
+      segments: fallbackTranscript.segments,
+      includeTimestamps: dependencies.includeTimestamps,
+      retrievalMethod: "fallback"
+    }),
+    reference.id
+  );
+}
+
+function getTranscriptLanguageCatalog(
+  response: unknown,
+  reference: YouTubeVideoLookup,
+  selectedLanguage: string | undefined
+): YouTubeTranscriptRecord["languages"] {
+  return normalizeTranscriptRecord(
+    {
+      languages: [],
+      ...(selectedLanguage ? { selectedLanguage } : {})
+    },
+    reference,
+    response
+  ).languages;
+}
+
+function toFallbackRequestedLanguage(
+  requestedLanguage: string | undefined,
+  languageCatalog: YouTubeTranscriptRecord["languages"],
+  videoId: string
+): YouTubeTranscriptRecord["languages"][number] | undefined {
+  if (!requestedLanguage) {
+    return languageCatalog.find(language => language.isSelected) ?? languageCatalog[0];
+  }
+
+  if (languageCatalog.length > 0) {
+    return resolveRequestedTranscriptLanguage(
+      requestedLanguage,
+      languageCatalog,
+      videoId
+    );
+  }
+
+  return {
+    label: requestedLanguage,
+    isSelected: true,
+    ...(looksLikeLanguageCode(requestedLanguage)
+      ? { languageCode: requestedLanguage }
+      : {})
+  };
+}
+
+function buildFallbackLanguageCatalog(
+  languageCatalog: YouTubeTranscriptRecord["languages"],
+  selectedLanguage: string,
+  selectedLanguageCode?: string
+): YouTubeTranscriptRecord["languages"] {
+  if (languageCatalog.length === 0) {
+    return [
+      {
+        label: selectedLanguage,
+        isSelected: true,
+        ...(selectedLanguageCode ? { languageCode: selectedLanguageCode } : {})
+      }
+    ];
+  }
+
+  const languages = languageCatalog.map(language => ({
+    ...language,
+    isSelected:
+      normalizeLanguageToken(language.label) ===
+        normalizeLanguageToken(selectedLanguage) ||
+      (selectedLanguageCode
+        ? normalizeLanguageToken(language.languageCode ?? "") ===
+          normalizeLanguageToken(selectedLanguageCode)
+        : false)
+  }));
+
+  if (languages.some(language => language.isSelected)) {
+    return languages;
+  }
+
+  return [
+    {
+      label: selectedLanguage,
+      isSelected: true,
+      ...(selectedLanguageCode ? { languageCode: selectedLanguageCode } : {})
+    },
+    ...languages
+  ];
+}
+
+function ensureTranscriptRecord(
+  record: YouTubeTranscriptRecord,
+  videoId: string
+): YouTubeTranscriptRecord {
+  if (record.segmentCount === 0 || !record.text.trim()) {
+    throw new NotAvailableError(
+      "No public transcript is available for this video.",
+      {
+        cause: "transcript_unavailable",
+        details: {
+          videoId
+        }
+      }
+    );
+  }
+
+  return record;
+}
+
+function applyTranscriptFormat(
+  record: YouTubeTranscriptRecord,
+  includeTimestamps: boolean
+): YouTubeTranscriptRecord {
+  if (record.includeTimestamps === includeTimestamps) {
+    return record;
+  }
+
+  return {
+    ...record,
+    includeTimestamps,
+    text: formatTranscriptText(record.segments, {
+      includeTimestamps
+    })
+  };
 }
 
 async function getSearchContinuationPage(
@@ -823,6 +1062,10 @@ function normalizeTranscriptLanguageOption(language: string | undefined): string
 
 function normalizeLanguageToken(value: string): string {
   return value.trim().toLocaleLowerCase();
+}
+
+function looksLikeLanguageCode(value: string): boolean {
+  return /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(value.trim());
 }
 
 function dedupeFeatures(
