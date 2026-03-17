@@ -64,7 +64,8 @@ const getVideoDetailsInputSchema = z
 const getTranscriptInputSchema = z
   .object({
     video: z.string().trim().min(1).max(500),
-    language: z.string().trim().min(1).max(100).optional()
+    language: z.string().trim().min(1).max(100).optional(),
+    includeTimestamps: z.boolean().optional()
   })
   .strict();
 
@@ -175,7 +176,10 @@ export function registerTools(
 
         const input = parseGetTranscriptInput(args);
         const record = await getTranscript(input.video, {
-          ...(input.language ? { language: input.language } : {})
+          ...(input.language ? { language: input.language } : {}),
+          ...(typeof input.includeTimestamps === "boolean"
+            ? { includeTimestamps: input.includeTimestamps }
+            : {})
         });
 
         return createSuccessResult({
@@ -236,6 +240,7 @@ function parseGetVideoDetailsInput(input: unknown): string {
 function parseGetTranscriptInput(input: unknown): {
   video: string;
   language?: string;
+  includeTimestamps?: boolean;
 } {
   const parsed = getTranscriptInputSchema.safeParse(input);
 
@@ -249,6 +254,12 @@ function parseGetTranscriptInput(input: unknown): {
       );
     }
 
+    if (path === "includeTimestamps") {
+      throw new InvalidInputError(
+        "Provide `includeTimestamps` as `true` or `false` when formatting transcript text."
+      );
+    }
+
     throw new InvalidInputError(
       "Provide a YouTube video URL or bare 11-character video ID in `video`."
     );
@@ -256,7 +267,10 @@ function parseGetTranscriptInput(input: unknown): {
 
   return {
     video: parsed.data.video.trim(),
-    ...(parsed.data.language ? { language: parsed.data.language.trim() } : {})
+    ...(parsed.data.language ? { language: parsed.data.language.trim() } : {}),
+    ...(typeof parsed.data.includeTimestamps === "boolean"
+      ? { includeTimestamps: parsed.data.includeTimestamps }
+      : {})
   };
 }
 
@@ -375,11 +389,19 @@ function summarizeVideoRecord(record: YouTubeVideoRecord): string {
 }
 
 function summarizeTranscriptRecord(record: YouTubeTranscriptRecord): string {
-  if (record.title) {
-    return `Loaded public transcript for "${record.title}" in ${record.language}.`;
+  const summary = record.title
+    ? `Loaded public transcript for "${record.title}" in ${record.language}.`
+    : `Loaded public transcript for ${record.videoId} in ${record.language}.`;
+
+  if (record.retrievalMethod === "fallback") {
+    return `${summary} Fallback extractor used.`;
   }
 
-  return `Loaded public transcript for ${record.videoId} in ${record.language}.`;
+  if (record.includeTimestamps) {
+    return `${summary} Timestamps included.`;
+  }
+
+  return summary;
 }
 
 function shapeSearchPageData(page: YouTubeSearchPage): Record<string, unknown> {
@@ -433,6 +455,8 @@ function shapeTranscriptRecordData(record: YouTubeTranscriptRecord): Record<stri
     ...(record.channelTitle ? { channelTitle: record.channelTitle } : {}),
     language: record.language,
     languages: record.languages.map(shapeTranscriptLanguageData),
+    includeTimestamps: record.includeTimestamps,
+    retrievalMethod: record.retrievalMethod,
     segmentCount: record.segmentCount,
     text: record.text,
     segments: record.segments.map(shapeTranscriptSegmentData)

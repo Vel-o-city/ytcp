@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createFailureResult,
+  createNotAvailableResult,
   createSuccessResult
 } from "../../src/contracts/tool-result.js";
-import { InvalidInputError } from "../../src/lib/mcp-errors.js";
+import { InvalidInputError, NotAvailableError } from "../../src/lib/mcp-errors.js";
 import { createServer } from "../../src/server/create-server.js";
 
 type RegisteredTool = {
@@ -24,6 +25,8 @@ describe("get_transcript tool", () => {
         title: "Build an MCP Server",
         channelTitle: "Example Dev",
         language: "English",
+        includeTimestamps: true,
+        retrievalMethod: "fallback",
         languages: [
           {
             label: "English",
@@ -40,7 +43,7 @@ describe("get_transcript tool", () => {
           }
         ],
         segmentCount: 2,
-        text: "Hello world\nBuild with MCP",
+        text: "0:00 Hello world\n0:01 Build with MCP",
         segments: [
           {
             startMs: 0,
@@ -72,17 +75,21 @@ describe("get_transcript tool", () => {
     await expect(
       tool.handler({
         video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        language: "de"
+        language: "de",
+        includeTimestamps: true
       })
     ).resolves.toEqual(
       createSuccessResult({
-        summary: 'Loaded public transcript for "Build an MCP Server" in English.',
+        summary:
+          'Loaded public transcript for "Build an MCP Server" in English. Fallback extractor used.',
         data: {
           id: "dQw4w9WgXcQ",
           canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
           title: "Build an MCP Server",
           channelTitle: "Example Dev",
           language: "English",
+          includeTimestamps: true,
+          retrievalMethod: "fallback",
           languages: [
             {
               label: "English",
@@ -99,7 +106,7 @@ describe("get_transcript tool", () => {
             }
           ],
           segmentCount: 2,
-          text: "Hello world\nBuild with MCP",
+          text: "0:00 Hello world\n0:01 Build with MCP",
           segments: [
             {
               startTimeText: "0:00",
@@ -120,7 +127,8 @@ describe("get_transcript tool", () => {
     expect(youtubeService.getTranscript).toHaveBeenCalledWith(
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       {
-        language: "de"
+        language: "de",
+        includeTimestamps: true
       }
     );
   });
@@ -161,6 +169,18 @@ describe("get_transcript tool", () => {
         )
       )
     );
+    await expect(
+      tool.handler({
+        video: "dQw4w9WgXcQ",
+        includeTimestamps: "yes"
+      })
+    ).resolves.toEqual(
+      createFailureResult(
+        new InvalidInputError(
+          "Provide `includeTimestamps` as `true` or `false` when formatting transcript text."
+        )
+      )
+    );
   });
 
   it("keeps the transcript payload compact and omits internal normalization fields", async () => {
@@ -172,6 +192,8 @@ describe("get_transcript tool", () => {
           canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
           source: "id",
           language: "English",
+          includeTimestamps: false,
+          retrievalMethod: "primary",
           languages: [
             {
               label: "English",
@@ -209,6 +231,8 @@ describe("get_transcript tool", () => {
     expect(result.structuredContent.data).toMatchObject({
       id: "dQw4w9WgXcQ",
       language: "English",
+      includeTimestamps: false,
+      retrievalMethod: "primary",
       segmentCount: 1,
       text: "Hello world",
       segments: [
@@ -224,5 +248,39 @@ describe("get_transcript tool", () => {
     expect(result.structuredContent.data).not.toHaveProperty("source");
     expect(result.structuredContent.data).not.toHaveProperty("startMs");
     expect(result.structuredContent.data).not.toHaveProperty("endMs");
+  });
+
+  it("surfaces transcript-unavailable results cleanly after fallback recovery is exhausted", async () => {
+    const server = createServer({
+      youtubeService: {
+        getTranscript: vi.fn().mockRejectedValue(
+          new NotAvailableError("No public transcript is available for this video.", {
+            cause: "transcript_unavailable",
+            details: {
+              videoId: "dQw4w9WgXcQ",
+              fallback: true
+            }
+          })
+        )
+      }
+    });
+    const tool = (
+      server as unknown as { _registeredTools: Record<string, RegisteredTool> }
+    )._registeredTools.get_transcript;
+
+    await expect(
+      tool.handler({
+        video: "dQw4w9WgXcQ"
+      })
+    ).resolves.toEqual(
+      createNotAvailableResult({
+        summary: "No public transcript is available for this video.",
+        reason: "transcript_unavailable",
+        data: {
+          videoId: "dQw4w9WgXcQ",
+          fallback: true
+        }
+      })
+    );
   });
 });
