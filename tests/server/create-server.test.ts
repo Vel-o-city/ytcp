@@ -12,6 +12,10 @@ describe("createServer", () => {
       annotations?: Record<string, unknown>;
       description?: string;
     };
+    const transcriptTool = tools.get_transcript as {
+      annotations?: Record<string, unknown>;
+      description?: string;
+    };
     const searchTool = tools.search_videos as {
       annotations?: Record<string, unknown>;
       description?: string;
@@ -24,10 +28,13 @@ describe("createServer", () => {
     expect(Object.keys(tools)).toEqual([
       "server_status",
       "get_video_details",
+      "get_transcript",
       "search_videos"
     ]);
     expect(videoTool.description).toContain("Fetch compact details");
     expect(videoTool.annotations).toEqual({ readOnlyHint: true });
+    expect(transcriptTool.description).toContain("Fetch a public YouTube transcript");
+    expect(transcriptTool.annotations).toEqual({ readOnlyHint: true });
     expect(searchTool.description).toContain("Search public YouTube videos");
     expect(searchTool.annotations).toEqual({ readOnlyHint: true });
     expect((server as unknown as { _registeredResources: Record<string, unknown> })._registeredResources).toEqual({});
