@@ -108,10 +108,12 @@ describe("root transport boot surface", () => {
     );
     expect(rootExports.createYouTubeService).toBeDefined();
     expect(rootExports.createTranscriptFallbackAdapter).toBeDefined();
+    expect(rootExports.normalizePlaylistRecord).toBeDefined();
     expect(rootExports.normalizeTranscriptRecord).toBeDefined();
     expect(rootExports.formatTranscriptText).toBeDefined();
     expect(rootExports.normalizeVideoRecord).toBeDefined();
     expect(rootExports.normalizeSearchPage).toBeDefined();
+    expect(rootExports.DEFAULT_PLAYLIST_RESULTS).toBe(10);
     expect(rootExports.DEFAULT_SEARCH_RESULTS).toBe(5);
   });
 
@@ -135,6 +137,35 @@ describe("root transport boot surface", () => {
           {
             title: "Introduction",
             startTimeSeconds: 0
+          }
+        ]
+      }),
+      getPlaylist: vi.fn().mockResolvedValue({
+        kind: "playlist",
+        id: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+        canonicalUrl:
+          "https://www.youtube.com/playlist?list=PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+        source: "playlist",
+        title: "Song Queue",
+        channelTitle: "Google Developers",
+        itemCountText: "12 videos",
+        thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+        pageSize: 1,
+        nextPageToken: "playlist-page-1",
+        items: [
+          {
+            kind: "video",
+            id: "dQw4w9WgXcQ",
+            canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            title: "Video one",
+            channelTitle: "Google Developers",
+            durationText: "12:34",
+            durationSeconds: 754,
+            position: 1,
+            thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+            isPlayable: true,
+            isLive: false,
+            isUpcoming: false
           }
         ]
       }),
@@ -211,8 +242,17 @@ describe("root transport boot surface", () => {
         _registeredTools: Record<string, RegisteredTool>;
       }
     )._registeredTools.get_transcript;
+    const playlistTool = (
+      stdioRuntime.server as unknown as {
+        _registeredTools: Record<string, RegisteredTool>;
+      }
+    )._registeredTools.get_playlist;
     const stdioResult = await tool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+    const stdioPlaylistResult = await playlistTool.handler({
+      playlist: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+      maxResults: 1
     });
     const stdioTranscriptResult = await transcriptTool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -234,8 +274,17 @@ describe("root transport boot surface", () => {
         _registeredTools: Record<string, RegisteredTool>;
       }
     )._registeredTools.get_transcript;
+    const httpPlaylistTool = (
+      createdServers[1] as unknown as {
+        _registeredTools: Record<string, RegisteredTool>;
+      }
+    )._registeredTools.get_playlist;
     const httpResult = await httpTool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+    const httpPlaylistResult = await httpPlaylistTool.handler({
+      playlist: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+      maxResults: 1
     });
     const httpTranscriptResult = await httpTranscriptTool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -244,6 +293,7 @@ describe("root transport boot surface", () => {
 
     expect(serverFactory).toHaveBeenCalledTimes(2);
     expect(stdioResult).toEqual(httpResult);
+    expect(stdioPlaylistResult).toEqual(httpPlaylistResult);
     expect(stdioTranscriptResult).toEqual(httpTranscriptResult);
     expect(httpResult).toEqual(
       createSuccessResult({
@@ -300,6 +350,38 @@ describe("root transport boot surface", () => {
         }
       })
     );
+    expect(httpPlaylistResult).toEqual(
+      createSuccessResult({
+        summary:
+          'Loaded public playlist details for "Song Queue" with 1 item. More are available.',
+        data: {
+          id: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+          canonicalUrl:
+            "https://www.youtube.com/playlist?list=PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+          title: "Song Queue",
+          channelTitle: "Google Developers",
+          itemCountText: "12 videos",
+          thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+          pageSize: 1,
+          nextPageToken: "playlist-page-1",
+          items: [
+            {
+              kind: "video",
+              id: "dQw4w9WgXcQ",
+              canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+              title: "Video one",
+              channelTitle: "Google Developers",
+              durationText: "12:34",
+              position: 1,
+              thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+              isPlayable: true,
+              isLive: false,
+              isUpcoming: false
+            }
+          ]
+        }
+      })
+    );
     expect(youtubeService.getVideo).toHaveBeenNthCalledWith(
       1,
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -308,6 +390,14 @@ describe("root transport boot surface", () => {
       2,
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     );
+    expect(youtubeService.getPlaylist).toHaveBeenNthCalledWith(1, {
+      playlist: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+      maxResults: 1
+    });
+    expect(youtubeService.getPlaylist).toHaveBeenNthCalledWith(2, {
+      playlist: "PL590L5WQmH8fJ54F1F9QK3Zc7N0b9dYxK",
+      maxResults: 1
+    });
     expect(youtubeService.getTranscript).toHaveBeenNthCalledWith(
       1,
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",

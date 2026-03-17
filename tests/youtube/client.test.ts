@@ -154,7 +154,9 @@ describe("youtube normalization contracts", () => {
       privacy: "PUBLIC",
       viewCountText: "1,234 views",
       lastUpdatedText: "Updated today",
-      thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"]
+      thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+      pageSize: 0,
+      items: []
     });
   });
 
