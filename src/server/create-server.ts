@@ -12,7 +12,7 @@ export const SERVER_INFO = {
 
 export type CreateServerOptions = {
   youtubeService?: Partial<
-    Pick<YouTubeService, "getVideo" | "searchVideos" | "getTranscript">
+    Pick<YouTubeService, "getVideo" | "getPlaylist" | "searchVideos" | "getTranscript">
   >;
 };
 

@@ -8,6 +8,7 @@ import {
 import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
 import {
   MAX_SEARCH_RESULTS,
+  type YouTubePlaylistRecord,
   type YouTubeSearchFeature,
   type YouTubeSearchFilters,
   type YouTubeSearchPage,
@@ -25,11 +26,12 @@ import { SERVER_INFO } from "./create-server.js";
 
 export type RegisterToolDependencies = {
   youtubeService?: Partial<
-    Pick<YouTubeService, "getVideo" | "searchVideos" | "getTranscript">
+    Pick<YouTubeService, "getVideo" | "getPlaylist" | "searchVideos" | "getTranscript">
   >;
 };
 
 const MAX_VIDEO_DESCRIPTION_LENGTH = 600;
+const MAX_PLAYLIST_DESCRIPTION_LENGTH = 400;
 const searchFeatureSchema = z.enum([
   "hd",
   "subtitles",
@@ -61,6 +63,11 @@ const getVideoDetailsInputSchema = z
     video: z.string().trim().min(1).max(500)
   })
   .strict();
+const getPlaylistInputSchema = z
+  .object({
+    playlist: z.string().trim().min(1).max(500)
+  })
+  .strict();
 const getTranscriptInputSchema = z
   .object({
     video: z.string().trim().min(1).max(500),
@@ -75,6 +82,7 @@ export function registerTools(
 ): void {
   const defaultYouTubeService =
     dependencies.youtubeService?.getVideo &&
+    dependencies.youtubeService?.getPlaylist &&
     dependencies.youtubeService?.searchVideos &&
     dependencies.youtubeService?.getTranscript
       ? undefined
@@ -82,6 +90,8 @@ export function registerTools(
   const searchVideos =
     dependencies.youtubeService?.searchVideos ?? defaultYouTubeService?.searchVideos;
   const getVideo = dependencies.youtubeService?.getVideo ?? defaultYouTubeService?.getVideo;
+  const getPlaylist =
+    dependencies.youtubeService?.getPlaylist ?? defaultYouTubeService?.getPlaylist;
   const getTranscript =
     dependencies.youtubeService?.getTranscript ?? defaultYouTubeService?.getTranscript;
 
@@ -146,6 +156,40 @@ export function registerTools(
         return createSuccessResult({
           summary: summarizeVideoRecord(record),
           data: shapeVideoRecordData(record)
+        });
+      } catch (error) {
+        return createResultFromError(error);
+      }
+    }
+  );
+
+  _server.registerTool(
+    "get_playlist",
+    {
+      description:
+        "Fetch compact metadata for a public YouTube playlist from a canonical playlist URL, a watch URL with `list=...`, or a bare playlist ID.",
+      inputSchema: getPlaylistInputSchema.shape,
+      annotations: {
+        readOnlyHint: true
+      }
+    },
+    async args => {
+      try {
+        if (!getPlaylist) {
+          throw new NotAvailableError(
+            "Playlist retrieval is not configured for this ytcp build.",
+            {
+              cause: "playlist_lookup_unconfigured"
+            }
+          );
+        }
+
+        const input = parseGetPlaylistInput(args);
+        const record = await getPlaylist(input);
+
+        return createSuccessResult({
+          summary: summarizePlaylistRecord(record),
+          data: shapePlaylistRecordData(record)
         });
       } catch (error) {
         return createResultFromError(error);
@@ -235,6 +279,18 @@ function parseGetVideoDetailsInput(input: unknown): string {
   }
 
   return parsed.data.video.trim();
+}
+
+function parseGetPlaylistInput(input: unknown): string {
+  const parsed = getPlaylistInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    throw new InvalidInputError(
+      "Provide a YouTube playlist URL, a watch URL with `list=...`, or a bare playlist ID in `playlist`."
+    );
+  }
+
+  return parsed.data.playlist.trim();
 }
 
 function parseGetTranscriptInput(input: unknown): {
@@ -388,6 +444,14 @@ function summarizeVideoRecord(record: YouTubeVideoRecord): string {
   return `Loaded public video details for ${record.id}.`;
 }
 
+function summarizePlaylistRecord(record: YouTubePlaylistRecord): string {
+  if (record.title) {
+    return `Loaded public playlist details for "${record.title}".`;
+  }
+
+  return `Loaded public playlist details for ${record.id}.`;
+}
+
 function summarizeTranscriptRecord(record: YouTubeTranscriptRecord): string {
   const summary = record.title
     ? `Loaded public transcript for "${record.title}" in ${record.language}.`
@@ -444,6 +508,28 @@ function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknow
     ...(typeof record.startTimeSeconds === "number"
       ? { startTimeSeconds: record.startTimeSeconds }
       : {})
+  };
+}
+
+function shapePlaylistRecordData(record: YouTubePlaylistRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    canonicalUrl: record.canonicalUrl,
+    ...(record.title ? { title: record.title } : {}),
+    ...(record.description
+      ? {
+          description: truncateText(
+            record.description,
+            MAX_PLAYLIST_DESCRIPTION_LENGTH
+          )
+        }
+      : {}),
+    ...(record.channelTitle ? { channelTitle: record.channelTitle } : {}),
+    ...(record.itemCountText ? { itemCountText: record.itemCountText } : {}),
+    ...(record.privacy ? { privacy: record.privacy } : {}),
+    ...(record.viewCountText ? { viewCountText: record.viewCountText } : {}),
+    ...(record.lastUpdatedText ? { lastUpdatedText: record.lastUpdatedText } : {}),
+    ...(record.thumbnails.length > 0 ? { thumbnails: record.thumbnails } : {})
   };
 }
 
