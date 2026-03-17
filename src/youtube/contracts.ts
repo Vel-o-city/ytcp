@@ -23,6 +23,8 @@ export type YouTubeChannelInput = string | YouTubeChannelLookup;
 
 export const DEFAULT_SEARCH_RESULTS = 5;
 export const MAX_SEARCH_RESULTS = 10;
+export const DEFAULT_PLAYLIST_RESULTS = 10;
+export const MAX_PLAYLIST_RESULTS = 25;
 
 export type YouTubeVideoChapter = {
   title: string;
@@ -54,6 +56,33 @@ export type YouTubeVideoRecord = {
   startTimeSeconds?: number;
 };
 
+export type YouTubePlaylistQuery =
+  | {
+      playlist: YouTubePlaylistInput;
+      pageToken?: never;
+      maxResults?: number;
+    }
+  | {
+      pageToken: string;
+      playlist?: never;
+      maxResults?: number;
+    };
+
+export type YouTubePlaylistItem = {
+  kind: "video";
+  id: string;
+  canonicalUrl: string;
+  title: string;
+  channelTitle?: string;
+  durationText?: string;
+  durationSeconds?: number;
+  position?: number;
+  thumbnails: string[];
+  isPlayable: boolean;
+  isLive: boolean;
+  isUpcoming: boolean;
+};
+
 export type YouTubePlaylistRecord = {
   kind: "playlist";
   id: string;
@@ -68,6 +97,9 @@ export type YouTubePlaylistRecord = {
   viewCountText?: string;
   lastUpdatedText?: string;
   thumbnails: string[];
+  pageSize: number;
+  nextPageToken?: string;
+  items: YouTubePlaylistItem[];
 };
 
 export type YouTubeChannelRecord = {
@@ -199,7 +231,9 @@ export type YouTubeTranscriptOptions = {
 export type YouTubeService = {
   parseInput: (input: string) => YouTubeLookupReference;
   getVideo: (input: YouTubeVideoInput) => Promise<YouTubeVideoRecord>;
-  getPlaylist: (input: YouTubePlaylistInput) => Promise<YouTubePlaylistRecord>;
+  getPlaylist: (
+    input: YouTubePlaylistInput | YouTubePlaylistQuery
+  ) => Promise<YouTubePlaylistRecord>;
   getChannel: (input: YouTubeChannelInput) => Promise<YouTubeChannelRecord>;
   searchVideos: (query: YouTubeSearchQuery) => Promise<YouTubeSearchPage>;
   getTranscript: (

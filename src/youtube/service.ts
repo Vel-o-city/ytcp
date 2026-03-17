@@ -8,11 +8,14 @@ import {
 } from "../lib/mcp-errors.js";
 
 import {
+  DEFAULT_PLAYLIST_RESULTS,
   DEFAULT_SEARCH_RESULTS,
+  MAX_PLAYLIST_RESULTS,
   MAX_SEARCH_RESULTS,
   type YouTubeChannelInput,
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
+  type YouTubePlaylistQuery,
   type YouTubeSearchFeature,
   type YouTubeSearchFilters,
   type YouTubeSearchPage,
@@ -67,11 +70,19 @@ export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
 };
 
 type SearchFeedLike = Awaited<ReturnType<NonNullable<InnertubeClientLike["search"]>>>;
+type PlaylistFeedLike = Awaited<
+  ReturnType<NonNullable<InnertubeClientLike["getPlaylist"]>>
+>;
 
 type SearchContinuationState = {
   query: string;
   filters?: YouTubeSearchFilters;
   response: SearchFeedLike;
+};
+
+type PlaylistContinuationState = {
+  reference: YouTubePlaylistLookup;
+  response: PlaylistFeedLike;
 };
 
 type InitialSearchRequest = {
@@ -89,7 +100,24 @@ type ContinuationSearchRequest = {
 
 type NormalizedSearchRequest = InitialSearchRequest | ContinuationSearchRequest;
 
+type InitialPlaylistRequest = {
+  kind: "initial";
+  reference: YouTubePlaylistLookup;
+  maxResults: number;
+};
+
+type ContinuationPlaylistRequest = {
+  kind: "continuation";
+  pageToken: string;
+  maxResults: number;
+};
+
+type NormalizedPlaylistRequest =
+  | InitialPlaylistRequest
+  | ContinuationPlaylistRequest;
+
 const SEARCH_TTL_MS = 2 * 60 * 1000;
+const PLAYLIST_TTL_MS = 2 * 60 * 1000;
 const TRANSCRIPT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function createYouTubeService(
@@ -131,34 +159,62 @@ export function createYouTubeService(
       return youtubeCache.setLookup(cacheKey, record);
     },
     getPlaylist: async (
-      input: YouTubePlaylistInput
+      input: YouTubePlaylistInput | YouTubePlaylistQuery
     ): Promise<YouTubePlaylistRecord> => {
-      const reference = expectPlaylistReference(input, parser);
-      const cacheKey = createCacheKey(reference);
+      const playlistRequest = normalizePlaylistQuery(input, parser);
+
+      if (playlistRequest.kind === "continuation") {
+        return getPlaylistContinuationPage(
+          playlistRequest,
+          {
+            createContinuationToken,
+            logger,
+            policy,
+            youtubeCache
+          }
+        );
+      }
+
+      const cacheKey = createPlaylistCacheKey(
+        playlistRequest.reference,
+        playlistRequest.maxResults
+      );
       const cached = youtubeCache.getLookup<YouTubePlaylistRecord>(cacheKey);
 
       if (cached) {
-        logger.debug("youtube playlist cache hit", { id: reference.id });
+        logger.debug("youtube playlist cache hit", {
+          id: playlistRequest.reference.id,
+          maxResults: playlistRequest.maxResults
+        });
         return cached;
       }
 
       const upstream = await client.getClient();
 
       logger.debug("fetching youtube playlist", {
-        id: reference.id,
-        source: reference.source
+        id: playlistRequest.reference.id,
+        source: playlistRequest.reference.source,
+        maxResults: playlistRequest.maxResults
       });
 
       const response = await policy.execute(
-        () => upstream.getPlaylist(reference.id),
+        () => upstream.getPlaylist(playlistRequest.reference.id),
         {
           label: "playlist lookup",
-          target: reference.id
+          target: playlistRequest.reference.id
         }
       );
-      const record = normalizePlaylistRecord(response, reference);
+      const record = buildPlaylistRecord(
+        response,
+        playlistRequest.reference,
+        playlistRequest.maxResults,
+        {
+          createContinuationToken,
+          youtubeCache
+        }
+      );
 
-      return youtubeCache.setLookup(cacheKey, record);
+      return youtubeCache.setLookup(cacheKey, record, PLAYLIST_TTL_MS);
     },
     getChannel: async (
       input: YouTubeChannelInput
@@ -395,6 +451,53 @@ async function resolveChannelTarget(
   );
 }
 
+async function getPlaylistContinuationPage(
+  playlistRequest: ContinuationPlaylistRequest,
+  dependencies: {
+    createContinuationToken: () => string;
+    logger: Logger;
+    policy: YouTubeRequestPolicy;
+    youtubeCache: YouTubeCache;
+  }
+): Promise<YouTubePlaylistRecord> {
+  const continuation = dependencies.youtubeCache.getContinuation<PlaylistContinuationState>(
+    playlistRequest.pageToken
+  );
+
+  if (!continuation) {
+    throw new NotAvailableError(
+      "This YouTube playlist page token is missing or expired. Run the playlist lookup again to continue.",
+      {
+        cause: "playlist_page_token_expired"
+      }
+    );
+  }
+
+  dependencies.logger.debug("fetching youtube playlist continuation", {
+    id: continuation.reference.id,
+    pageToken: playlistRequest.pageToken,
+    maxResults: playlistRequest.maxResults
+  });
+
+  const response = await dependencies.policy.execute(
+    () => continuation.response.getContinuation(),
+    {
+      label: "playlist continuation",
+      target: continuation.reference.id
+    }
+  );
+
+  return buildPlaylistRecord(
+    response,
+    continuation.reference,
+    playlistRequest.maxResults,
+    {
+      createContinuationToken: dependencies.createContinuationToken,
+      youtubeCache: dependencies.youtubeCache
+    }
+  );
+}
+
 function extractBrowseId(value: unknown): string | undefined {
   const payload = asRecord(asRecord(value)?.payload);
 
@@ -426,6 +529,13 @@ function createCacheKey(reference: ParsedYouTubeReference): string {
     case "channel":
       return `channel:${reference.source}:${reference.channelId ?? reference.handle ?? reference.customName ?? reference.username ?? reference.canonicalUrl}`;
   }
+}
+
+function createPlaylistCacheKey(
+  reference: YouTubePlaylistLookup,
+  maxResults: number
+): string {
+  return `${createCacheKey(reference)}:max=${maxResults}`;
 }
 
 async function getVideoLookupResponse(
@@ -967,6 +1077,23 @@ function buildSearchPage(
   return nextPageToken ? { ...page, nextPageToken } : page;
 }
 
+function buildPlaylistRecord(
+  response: PlaylistFeedLike,
+  reference: YouTubePlaylistLookup,
+  maxResults: number,
+  dependencies: {
+    createContinuationToken: () => string;
+    youtubeCache: YouTubeCache;
+  }
+): YouTubePlaylistRecord {
+  const nextPageToken = cachePlaylistContinuation(response, reference, dependencies);
+  const record = normalizePlaylistRecord(response, reference, {
+    maxResults
+  });
+
+  return nextPageToken ? { ...record, nextPageToken } : record;
+}
+
 function cacheSearchContinuation(
   response: SearchFeedLike,
   request: InitialSearchRequest,
@@ -992,6 +1119,69 @@ function cacheSearchContinuation(
   );
 
   return token;
+}
+
+function cachePlaylistContinuation(
+  response: PlaylistFeedLike,
+  reference: YouTubePlaylistLookup,
+  dependencies: {
+    createContinuationToken: () => string;
+    youtubeCache: YouTubeCache;
+  }
+): string | undefined {
+  if (!response.has_continuation) {
+    return undefined;
+  }
+
+  const token = dependencies.createContinuationToken();
+
+  dependencies.youtubeCache.setContinuation<PlaylistContinuationState>(
+    token,
+    {
+      reference,
+      response
+    },
+    PLAYLIST_TTL_MS
+  );
+
+  return token;
+}
+
+function normalizePlaylistQuery(
+  input: YouTubePlaylistInput | YouTubePlaylistQuery,
+  parser: (input: string) => ParsedYouTubeReference
+): NormalizedPlaylistRequest {
+  if (typeof input === "string" || isParsedReference(input)) {
+    return {
+      kind: "initial",
+      reference: expectPlaylistReference(input, parser),
+      maxResults: normalizePlaylistMaxResults(undefined)
+    };
+  }
+
+  const maxResults = normalizePlaylistMaxResults(input.maxResults);
+
+  if (typeof input.pageToken === "string") {
+    const pageToken = input.pageToken.trim();
+
+    if (!pageToken) {
+      throw new InvalidInputError(
+        "Provide a non-empty `pageToken` string to request the next playlist page."
+      );
+    }
+
+    return {
+      kind: "continuation",
+      pageToken,
+      maxResults
+    };
+  }
+
+  return {
+    kind: "initial",
+    reference: expectPlaylistReference(input.playlist, parser),
+    maxResults
+  };
 }
 
 function normalizeSearchQuery(input: YouTubeSearchQuery): NormalizedSearchRequest {
@@ -1044,6 +1234,22 @@ function normalizeSearchQuery(input: YouTubeSearchQuery): NormalizedSearchReques
   };
 }
 
+function normalizePlaylistMaxResults(maxResults: number | undefined): number {
+  const resolvedMaxResults = maxResults ?? DEFAULT_PLAYLIST_RESULTS;
+
+  if (
+    !Number.isInteger(resolvedMaxResults) ||
+    resolvedMaxResults < 1 ||
+    resolvedMaxResults > MAX_PLAYLIST_RESULTS
+  ) {
+    throw new InvalidInputError(
+      `\`maxResults\` must be between 1 and ${MAX_PLAYLIST_RESULTS}.`
+    );
+  }
+
+  return resolvedMaxResults;
+}
+
 function normalizeMaxResults(maxResults: number | undefined): number {
   const resolvedMaxResults = maxResults ?? DEFAULT_SEARCH_RESULTS;
 
@@ -1062,6 +1268,16 @@ function normalizeMaxResults(maxResults: number | undefined): number {
 
 function createSearchCacheKey(query: InitialSearchRequest): string {
   return `search:${query.query}:max=${query.maxResults}:filters=${JSON.stringify(query.filters ?? {})}`;
+}
+
+function isParsedReference(value: unknown): value is ParsedYouTubeReference {
+  const record = asRecord(value);
+
+  return (
+    record?.kind === "video" ||
+    record?.kind === "playlist" ||
+    record?.kind === "channel"
+  );
 }
 
 function createTranscriptCacheKey(

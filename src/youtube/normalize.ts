@@ -1,4 +1,5 @@
 import type {
+  YouTubePlaylistItem,
   YouTubeSearchFilters,
   YouTubeSearchPage,
   YouTubeSearchQuery,
@@ -16,12 +17,14 @@ import type {
   YouTubeVideoRecord
 } from "./contracts.js";
 import type { InnertubeClientLike } from "./client.js";
+import { createCanonicalVideoUrl } from "./reference.js";
 
 type UnknownRecord = Record<string, unknown>;
 type InnertubeSearchFilters = Parameters<InnertubeClientLike["search"]>[1];
 const SEARCH_REFINEMENT_LIMIT = 3;
 const SEARCH_SNIPPET_MAX_LENGTH = 160;
 const SEARCH_THUMBNAIL_LIMIT = 1;
+const PLAYLIST_THUMBNAIL_LIMIT = 1;
 
 export function normalizeVideoRecord(
   response: unknown,
@@ -72,10 +75,17 @@ export function normalizeVideoRecord(
 
 export function normalizePlaylistRecord(
   response: unknown,
-  reference: YouTubePlaylistLookup
+  reference: YouTubePlaylistLookup,
+  options: {
+    maxResults?: number;
+  } = {}
 ): YouTubePlaylistRecord {
   const info = asRecord(getValue(response, "info"));
   const author = asRecord(getValue(info, "author"));
+  const items = extractPlaylistItems(getValue(response, "items")).slice(
+    0,
+    options.maxResults ?? Number.POSITIVE_INFINITY
+  );
 
   return {
     kind: "playlist",
@@ -93,7 +103,9 @@ export function normalizePlaylistRecord(
     privacy: pickText(getValue(info, "privacy")),
     viewCountText: pickText(getValue(info, "views")),
     lastUpdatedText: pickText(getValue(info, "last_updated")),
-    thumbnails: extractThumbnailUrls(getValue(info, "thumbnails"))
+    thumbnails: extractThumbnailUrls(getValue(info, "thumbnails")),
+    pageSize: items.length,
+    items
   };
 }
 
@@ -554,6 +566,50 @@ function extractSearchResults(value: unknown): YouTubeSearchResult[] {
   return value
     .map(item => normalizeSearchResult(item))
     .filter((item): item is YouTubeSearchResult => Boolean(item));
+}
+
+function extractPlaylistItems(value: unknown): YouTubePlaylistItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(item => normalizePlaylistItem(item))
+    .filter((item): item is YouTubePlaylistItem => Boolean(item));
+}
+
+function normalizePlaylistItem(value: unknown): YouTubePlaylistItem | null {
+  const item = asRecord(value);
+
+  if (!item) {
+    return null;
+  }
+
+  const id = pickText(item.id, item.video_id, item.videoId);
+  const title = pickText(item.title);
+
+  if (!id || !title) {
+    return null;
+  }
+
+  const author = asRecord(item.author);
+  const duration = asRecord(item.duration);
+  const position = pickNumber(item.position, item.index, getValue(item, "index"));
+
+  return {
+    kind: "video",
+    id,
+    canonicalUrl: createCanonicalVideoUrl(id),
+    title,
+    channelTitle: pickText(getValue(author, "name"), author),
+    durationText: pickText(getValue(duration, "text"), item.length_text),
+    durationSeconds: pickNumber(getValue(duration, "seconds"), item.length_seconds),
+    ...(typeof position === "number" ? { position } : {}),
+    thumbnails: extractThumbnailUrls(item.thumbnails).slice(0, PLAYLIST_THUMBNAIL_LIMIT),
+    isPlayable: pickBoolean(item.is_playable) ?? true,
+    isLive: pickBoolean(item.is_live) ?? false,
+    isUpcoming: pickBoolean(item.is_upcoming) ?? false
+  };
 }
 
 function normalizeSearchResult(value: unknown): YouTubeSearchResult | null {
