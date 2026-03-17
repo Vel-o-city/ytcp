@@ -28,6 +28,11 @@ export {
   type YouTubeSearchSortBy,
   type YouTubeSearchUploadDate,
   type YouTubeService,
+  type YouTubeTranscriptLanguage,
+  type YouTubeTranscriptOptions,
+  type YouTubeTranscriptRecord,
+  type YouTubeTranscriptRetrievalMethod,
+  type YouTubeTranscriptSegment,
   type YouTubeVideoInput,
   type YouTubeVideoChapter,
   type YouTubeVideoLookup,
@@ -45,9 +50,13 @@ export {
   type InnertubeClientLike
 } from "./client.js";
 export {
+  createTranscriptRecord,
+  formatTranscriptText,
+  formatTranscriptTimestamp,
   normalizeChannelRecord,
   normalizePlaylistRecord,
   normalizeSearchPage,
+  normalizeTranscriptRecord,
   toInnertubeSearchFilters,
   normalizeVideoRecord
 } from "./normalize.js";
@@ -62,3 +71,10 @@ export {
   createYouTubeService,
   type CreateYouTubeServiceOptions
 } from "./service.js";
+export {
+  createTranscriptFallbackAdapter,
+  type CreateTranscriptFallbackAdapterOptions,
+  type TranscriptFallbackAdapter,
+  type TranscriptFallbackRequest,
+  type TranscriptFallbackResult
+} from "./transcript-fallback.js";

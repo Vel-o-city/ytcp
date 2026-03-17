@@ -8,10 +8,13 @@ import { type YouTubeTranscriptRecord } from "../../src/youtube/contracts.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
 import {
   formatTranscriptText,
+  formatTranscriptTimestamp,
   normalizeTranscriptRecord
 } from "../../src/youtube/normalize.js";
 import { parseYouTubeInput } from "../../src/youtube/parser.js";
 import type { YouTubeVideoReference } from "../../src/youtube/reference.js";
+import * as rootModule from "../../src/index.js";
+import * as youtubeModule from "../../src/youtube/index.js";
 
 function expectVideoReference(value: ReturnType<typeof parseYouTubeInput>): YouTubeVideoReference {
   expect(value.kind).toBe("video");
@@ -260,6 +263,48 @@ describe("youtube transcript normalization", () => {
         { includeTimestamps: true }
       ).text
     ).toBe("0:00 Hello world");
+  });
+});
+
+describe("youtube transcript exports and edge cases", () => {
+  it("re-exports the transcript helpers through the youtube module and package root", () => {
+    expect(youtubeModule.normalizeTranscriptRecord).toBe(normalizeTranscriptRecord);
+    expect(youtubeModule.formatTranscriptText).toBe(formatTranscriptText);
+    expect(youtubeModule.formatTranscriptTimestamp).toBe(formatTranscriptTimestamp);
+    expect(youtubeModule.createTranscriptFallbackAdapter).toBeDefined();
+    expect(rootModule.normalizeTranscriptRecord).toBe(normalizeTranscriptRecord);
+    expect(rootModule.formatTranscriptText).toBe(formatTranscriptText);
+    expect(rootModule.createTranscriptFallbackAdapter).toBeDefined();
+  });
+
+  it("keeps long-form transcript timestamps stable across hour boundaries", () => {
+    const record = normalizeTranscriptRecord(
+      {
+        languages: ["English"],
+        selectedLanguage: "English",
+        transcript: {
+          content: {
+            body: {
+              initial_segments: [
+                {
+                  start_ms: "3661000",
+                  end_ms: "3665000",
+                  start_time_text: { text: "1:01:01" },
+                  snippet: { text: "Hour-mark transcript segment" }
+                }
+              ]
+            }
+          }
+        }
+      },
+      expectVideoReference(parseYouTubeInput("dQw4w9WgXcQ")),
+      undefined,
+      { includeTimestamps: true }
+    );
+
+    expect(formatTranscriptTimestamp(3661)).toBe("1:01:01");
+    expect(record.text).toBe("1:01:01 Hour-mark transcript segment");
+    expect(record.segmentCount).toBe(1);
   });
 });
 
