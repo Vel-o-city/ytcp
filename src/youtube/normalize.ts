@@ -594,7 +594,8 @@ function normalizePlaylistItem(value: unknown): YouTubePlaylistItem | null {
 
   const author = asRecord(item.author);
   const duration = asRecord(item.duration);
-  const position = pickNumber(item.position, item.index, getValue(item, "index"));
+  const positionText = pickText(item.index, getValue(item, "index"));
+  const position = pickNumber(item.position, positionText);
 
   return {
     kind: "video",

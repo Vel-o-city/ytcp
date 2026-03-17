@@ -145,7 +145,10 @@ describe("get_playlist tool", () => {
     })) as {
       structuredContent: {
         status: string;
-        data: Record<string, unknown>;
+        data: {
+          items: Array<Record<string, unknown>>;
+          [key: string]: unknown;
+        };
       };
     };
 

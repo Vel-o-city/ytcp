@@ -96,7 +96,9 @@ describe("playlist lookups", () => {
         items: [
           {
             id: "dQw4w9WgXcQ",
-            index: "1",
+            index: {
+              text: "1"
+            },
             title: "Video one",
             author: {
               name: "Google Developers"
@@ -195,7 +197,9 @@ describe("playlist lookups", () => {
       items: [
         {
           id: "9bZkp7q19f0",
-          index: "2",
+          index: {
+            text: "2"
+          },
           title: "Video two",
           author: {
             name: "Google Developers"
@@ -223,7 +227,9 @@ describe("playlist lookups", () => {
       items: [
         {
           id: "dQw4w9WgXcQ",
-          index: "1",
+          index: {
+            text: "1"
+          },
           title: "Video one",
           author: {
             name: "Google Developers"
