@@ -33,6 +33,7 @@ describe("createServer", () => {
       "server_status",
       "get_video_details",
       "get_playlist",
+      "get_channel",
       "get_transcript",
       "search_videos"
     ]);

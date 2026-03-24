@@ -9,6 +9,8 @@ import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
 import {
   MAX_PLAYLIST_RESULTS,
   MAX_SEARCH_RESULTS,
+  type YouTubeChannelRecord,
+  type YouTubeChannelVideoItem,
   type YouTubePlaylistItem,
   type YouTubePlaylistQuery,
   type YouTubePlaylistRecord,
@@ -29,12 +31,13 @@ import { SERVER_INFO } from "./create-server.js";
 
 export type RegisterToolDependencies = {
   youtubeService?: Partial<
-    Pick<YouTubeService, "getVideo" | "getPlaylist" | "searchVideos" | "getTranscript">
+    Pick<YouTubeService, "getVideo" | "getPlaylist" | "getChannel" | "searchVideos" | "getTranscript">
   >;
 };
 
 const MAX_VIDEO_DESCRIPTION_LENGTH = 600;
 const MAX_PLAYLIST_DESCRIPTION_LENGTH = 400;
+const MAX_CHANNEL_DESCRIPTION_LENGTH = 400;
 const searchFeatureSchema = z.enum([
   "hd",
   "subtitles",
@@ -80,6 +83,11 @@ const getTranscriptInputSchema = z
     includeTimestamps: z.boolean().optional()
   })
   .strict();
+const getChannelInputSchema = z
+  .object({
+    channel: z.string().trim().min(1).max(500)
+  })
+  .strict();
 
 export function registerTools(
   _server: McpServer,
@@ -88,6 +96,7 @@ export function registerTools(
   const defaultYouTubeService =
     dependencies.youtubeService?.getVideo &&
     dependencies.youtubeService?.getPlaylist &&
+    dependencies.youtubeService?.getChannel &&
     dependencies.youtubeService?.searchVideos &&
     dependencies.youtubeService?.getTranscript
       ? undefined
@@ -97,6 +106,8 @@ export function registerTools(
   const getVideo = dependencies.youtubeService?.getVideo ?? defaultYouTubeService?.getVideo;
   const getPlaylist =
     dependencies.youtubeService?.getPlaylist ?? defaultYouTubeService?.getPlaylist;
+  const getChannel =
+    dependencies.youtubeService?.getChannel ?? defaultYouTubeService?.getChannel;
   const getTranscript =
     dependencies.youtubeService?.getTranscript ?? defaultYouTubeService?.getTranscript;
 
@@ -203,6 +214,40 @@ export function registerTools(
   );
 
   _server.registerTool(
+    "get_channel",
+    {
+      description:
+        "Fetch compact metadata and recent videos for a public YouTube channel from a handle, bare channel ID, or canonical channel URL.",
+      inputSchema: getChannelInputSchema.shape,
+      annotations: {
+        readOnlyHint: true
+      }
+    },
+    async args => {
+      try {
+        if (!getChannel) {
+          throw new NotAvailableError(
+            "Channel lookups are not configured for this ytcp build.",
+            {
+              cause: "channel_lookup_unconfigured"
+            }
+          );
+        }
+
+        const input = parseGetChannelInput(args);
+        const record = await getChannel(input);
+
+        return createSuccessResult({
+          summary: summarizeChannelRecord(record),
+          data: shapeChannelRecordData(record)
+        });
+      } catch (error) {
+        return createResultFromError(error);
+      }
+    }
+  );
+
+  _server.registerTool(
     "get_transcript",
     {
       description:
@@ -272,6 +317,18 @@ export function registerTools(
       }
     }
   );
+}
+
+function parseGetChannelInput(input: unknown): string {
+  const parsed = getChannelInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    throw new InvalidInputError(
+      "Provide a YouTube channel handle (e.g. @name), bare channel ID, or canonical channel URL in `channel`."
+    );
+  }
+
+  return parsed.data.channel.trim();
 }
 
 function parseGetVideoDetailsInput(input: unknown): string {
@@ -511,6 +568,14 @@ function summarizePlaylistRecord(record: YouTubePlaylistRecord): string {
   }.${record.nextPageToken ? " More are available." : ""}`;
 }
 
+function summarizeChannelRecord(record: YouTubeChannelRecord): string {
+  if (record.title) {
+    return `Loaded public channel metadata for "${record.title}".`;
+  }
+
+  return `Loaded public channel metadata for ${record.id ?? record.canonicalUrl}.`;
+}
+
 function summarizeTranscriptRecord(record: YouTubeTranscriptRecord): string {
   const summary = record.title
     ? `Loaded public transcript for "${record.title}" in ${record.language}.`
@@ -592,6 +657,35 @@ function shapePlaylistRecordData(record: YouTubePlaylistRecord): Record<string, 
     pageSize: record.pageSize,
     ...(record.nextPageToken ? { nextPageToken: record.nextPageToken } : {}),
     items: record.items.map(shapePlaylistItemData)
+  };
+}
+
+function shapeChannelRecordData(record: YouTubeChannelRecord): Record<string, unknown> {
+  return {
+    ...(record.id ? { id: record.id } : {}),
+    canonicalUrl: record.canonicalUrl,
+    ...(record.handle ? { handle: record.handle } : {}),
+    ...(record.title ? { title: record.title } : {}),
+    ...(record.description
+      ? { description: truncateText(record.description, MAX_CHANNEL_DESCRIPTION_LENGTH) }
+      : {}),
+    ...(record.subscriberCountText ? { subscriberCountText: record.subscriberCountText } : {}),
+    ...(record.videoCountText ? { videoCountText: record.videoCountText } : {}),
+    ...(record.viewCountText ? { viewCountText: record.viewCountText } : {}),
+    ...(record.thumbnails.length > 0 ? { thumbnails: record.thumbnails } : {}),
+    recentVideos: (record.recentVideos ?? []).map(shapeChannelVideoItemData)
+  };
+}
+
+function shapeChannelVideoItemData(item: YouTubeChannelVideoItem): Record<string, unknown> {
+  return {
+    id: item.id,
+    canonicalUrl: item.canonicalUrl,
+    title: item.title,
+    ...(item.thumbnails.length > 0 ? { thumbnails: item.thumbnails } : {}),
+    ...(item.publishedText ? { publishedText: item.publishedText } : {}),
+    ...(item.durationText ? { durationText: item.durationText } : {}),
+    ...(item.viewCountText ? { viewCountText: item.viewCountText } : {})
   };
 }
 
