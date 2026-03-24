@@ -27,6 +27,8 @@ export const DEFAULT_PLAYLIST_RESULTS = 10;
 export const MAX_PLAYLIST_RESULTS = 25;
 export const DEFAULT_CHANNEL_RESULTS = 10;
 export const MAX_CHANNEL_RESULTS = 30;
+export const DEFAULT_COMMENT_RESULTS = 20;
+export const MAX_COMMENT_RESULTS = 50;
 
 export type YouTubeVideoChapter = {
   title: string;
@@ -241,6 +243,42 @@ export type YouTubeTranscriptOptions = {
   includeTimestamps?: boolean;
 };
 
+export type YouTubeCommentSortBy = "top_comments" | "new_comments";
+
+export type YouTubeCommentQuery =
+  | {
+      video: YouTubeVideoInput;
+      sortBy?: YouTubeCommentSortBy;
+      pageToken?: never;
+      maxResults?: number;
+    }
+  | {
+      pageToken: string;
+      video?: never;
+      sortBy?: never;
+      maxResults?: number;
+    };
+
+export type YouTubeCommentThread = {
+  threadId: string;
+  text: string;
+  authorName?: string;
+  likeCount?: string;
+  replyCount?: string;
+  isPinned: boolean;
+  publishedText?: string;
+};
+
+export type YouTubeCommentPage = {
+  kind: "comments";
+  videoId: string;
+  canonicalUrl: string;
+  sortBy: YouTubeCommentSortBy;
+  pageSize: number;
+  nextPageToken?: string;
+  threads: YouTubeCommentThread[];
+};
+
 export type YouTubeService = {
   parseInput: (input: string) => YouTubeLookupReference;
   getVideo: (input: YouTubeVideoInput) => Promise<YouTubeVideoRecord>;
@@ -253,4 +291,5 @@ export type YouTubeService = {
     input: YouTubeVideoInput,
     options?: YouTubeTranscriptOptions
   ) => Promise<YouTubeTranscriptRecord>;
+  getComments: (query: YouTubeCommentQuery) => Promise<YouTubeCommentPage>;
 };
