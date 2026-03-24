@@ -12,7 +12,7 @@ export const SERVER_INFO = {
 
 export type CreateServerOptions = {
   youtubeService?: Partial<
-    Pick<YouTubeService, "getVideo" | "getPlaylist" | "getChannel" | "searchVideos" | "getTranscript">
+    Pick<YouTubeService, "getVideo" | "getPlaylist" | "getChannel" | "searchVideos" | "getTranscript" | "getComments">
   >;
 };
 
@@ -22,7 +22,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerTools(server, {
     youtubeService: options.youtubeService
   });
-  registerResources(server);
+  registerResources(server, {
+    youtubeService: options.youtubeService
+  });
   registerPrompts(server);
 
   return server;
