@@ -1,4 +1,5 @@
 import type {
+  YouTubeChannelVideoItem,
   YouTubePlaylistItem,
   YouTubeSearchFilters,
   YouTubeSearchPage,
@@ -154,6 +155,48 @@ export function normalizeChannelRecord(
     thumbnails: extractThumbnailUrls(
       getValue(metadata, "avatar") ?? getValue(metadata, "thumbnail")
     )
+  };
+}
+
+export function extractChannelVideos(response: unknown): YouTubeChannelVideoItem[] {
+  const videos = getValue(response, "videos");
+
+  if (!Array.isArray(videos)) {
+    return [];
+  }
+
+  return videos
+    .map(item => normalizeChannelVideoItem(item))
+    .filter((item): item is YouTubeChannelVideoItem => Boolean(item));
+}
+
+function normalizeChannelVideoItem(value: unknown): YouTubeChannelVideoItem | null {
+  const item = asRecord(value);
+
+  if (!item) {
+    return null;
+  }
+
+  const id = pickText(item.video_id, item.videoId, item.id);
+
+  if (!id) {
+    return null;
+  }
+
+  const title = pickText(item.title);
+
+  if (!title) {
+    return null;
+  }
+
+  return {
+    id,
+    canonicalUrl: createCanonicalVideoUrl(id),
+    title,
+    thumbnails: extractThumbnailUrls(item.thumbnails).slice(0, 1),
+    publishedText: pickText(item.published),
+    durationText: pickText(item.duration, item.length_text),
+    viewCountText: pickText(item.views, item.view_count, item.short_view_count)
   };
 }
 

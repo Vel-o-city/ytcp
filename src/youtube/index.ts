@@ -9,13 +9,16 @@ export {
   type YouTubeVideoReference
 } from "./reference.js";
 export {
+  DEFAULT_CHANNEL_RESULTS,
   DEFAULT_PLAYLIST_RESULTS,
   DEFAULT_SEARCH_RESULTS,
+  MAX_CHANNEL_RESULTS,
   MAX_PLAYLIST_RESULTS,
   MAX_SEARCH_RESULTS,
   type YouTubeChannelInput,
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
+  type YouTubeChannelVideoItem,
   type YouTubeLookupInput,
   type YouTubeLookupReference,
   type YouTubePlaylistItem,
@@ -55,6 +58,7 @@ export {
 } from "./client.js";
 export {
   createTranscriptRecord,
+  extractChannelVideos,
   formatTranscriptText,
   formatTranscriptTimestamp,
   normalizeChannelRecord,

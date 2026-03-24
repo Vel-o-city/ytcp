@@ -25,6 +25,8 @@ export const DEFAULT_SEARCH_RESULTS = 5;
 export const MAX_SEARCH_RESULTS = 10;
 export const DEFAULT_PLAYLIST_RESULTS = 10;
 export const MAX_PLAYLIST_RESULTS = 25;
+export const DEFAULT_CHANNEL_RESULTS = 10;
+export const MAX_CHANNEL_RESULTS = 30;
 
 export type YouTubeVideoChapter = {
   title: string;
@@ -102,6 +104,16 @@ export type YouTubePlaylistRecord = {
   items: YouTubePlaylistItem[];
 };
 
+export type YouTubeChannelVideoItem = {
+  id: string;
+  canonicalUrl: string;
+  title: string;
+  thumbnails: string[];
+  publishedText?: string;
+  durationText?: string;
+  viewCountText?: string;
+};
+
 export type YouTubeChannelRecord = {
   kind: "channel";
   canonicalUrl: string;
@@ -114,6 +126,7 @@ export type YouTubeChannelRecord = {
   videoCountText?: string;
   viewCountText?: string;
   thumbnails: string[];
+  recentVideos?: YouTubeChannelVideoItem[];
 };
 
 export type YouTubeSearchUploadDate =
