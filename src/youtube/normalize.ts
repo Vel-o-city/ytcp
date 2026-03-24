@@ -126,14 +126,14 @@ export function normalizeChannelRecord(
       reference.channelId
     ),
     handle: pickText(
-      reference.handle,
       extractHandleFromUrl(
         pickText(
           getValue(metadata, "vanity_channel_url"),
           getValue(metadata, "url_canonical"),
           getValue(metadata, "url")
         )
-      )
+      ),
+      reference.handle
     ),
     title: pickText(
       getValue(metadata, "title"),
