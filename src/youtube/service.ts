@@ -431,15 +431,56 @@ export function createYouTubeService(
     },
     getComments: async (query: YouTubeCommentQuery): Promise<YouTubeCommentPage> => {
       if (query.pageToken) {
-        throw new NotAvailableError(
-          "This comment page token is missing or expired. Run the comments lookup again to continue.",
-          { cause: "comment_page_token_expired" }
+        const state = youtubeCache.getContinuation<CommentContinuationState>(query.pageToken);
+
+        if (!state) {
+          throw new NotAvailableError(
+            "This comment page token is missing or expired. Run the comments lookup again to continue.",
+            { cause: "comment_page_token_expired" }
+          );
+        }
+
+        const maxResults = query.maxResults ?? DEFAULT_COMMENT_RESULTS;
+
+        logger.debug("fetching youtube comment continuation", {
+          videoId: state.videoId,
+          pageToken: query.pageToken,
+          maxResults
+        });
+
+        const nextResponse = await policy.execute(
+          () => state.response.getContinuation(),
+          { label: "comment continuation", target: state.videoId }
         );
+
+        const continuationReference: YouTubeVideoLookup = {
+          kind: "video",
+          id: state.videoId,
+          input: state.videoId,
+          source: "id",
+          canonicalUrl: `https://www.youtube.com/watch?v=${state.videoId}`
+        };
+        const page = normalizeCommentPage(nextResponse, continuationReference, {
+          sortBy: state.sortBy,
+          maxResults
+        });
+
+        if (asRecord(nextResponse)?.has_continuation) {
+          const newToken = createContinuationToken();
+          youtubeCache.setContinuation(newToken, {
+            videoId: state.videoId,
+            sortBy: state.sortBy,
+            response: nextResponse as CommentsLike
+          });
+          page.nextPageToken = newToken;
+        }
+
+        return page;
       }
 
       const sortBy: YouTubeCommentSortBy = query.sortBy ?? "top_comments";
       const maxResults = query.maxResults ?? DEFAULT_COMMENT_RESULTS;
-      const reference = expectReferenceKind(query.video, parser, "video");
+      const reference = expectReferenceKind(query.video!, parser, "video");
       const cacheKey = `comment:${reference.id}:sort=${sortBy}:max=${maxResults}`;
       const cached = youtubeCache.getLookup<YouTubeCommentPage>(cacheKey);
 
@@ -481,6 +522,16 @@ export function createYouTubeService(
       );
 
       const record = normalizeCommentPage(response, reference, { sortBy, maxResults });
+
+      if (asRecord(response)?.has_continuation) {
+        const token = createContinuationToken();
+        youtubeCache.setContinuation(token, {
+          videoId: reference.id,
+          sortBy,
+          response: response as CommentsLike
+        });
+        record.nextPageToken = token;
+      }
 
       return youtubeCache.setLookup(cacheKey, record, COMMENT_TTL_MS);
     }
