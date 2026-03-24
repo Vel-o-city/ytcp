@@ -1,5 +1,8 @@
 import type {
   YouTubeChannelVideoItem,
+  YouTubeCommentPage,
+  YouTubeCommentSortBy,
+  YouTubeCommentThread,
   YouTubePlaylistItem,
   YouTubeSearchFilters,
   YouTubeSearchPage,
@@ -335,6 +338,66 @@ export function formatTranscriptTimestamp(totalSeconds: number): string {
   }
 
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function extractCommentThreads(contents: unknown): YouTubeCommentThread[] {
+  if (!Array.isArray(contents)) {
+    return [];
+  }
+
+  return contents
+    .map(item => {
+      const record = asRecord(item);
+      const comment = asRecord(getValue(record, "comment"));
+
+      if (!comment) {
+        return null;
+      }
+
+      const threadId = pickText(getValue(comment, "comment_id")) ?? "";
+
+      if (!threadId) {
+        return null;
+      }
+
+      const rawText = pickText(getValue(comment, "content"));
+      const text = truncateText(rawText, 500) ?? rawText ?? "";
+      const authorName = pickText(getValue(getValue(comment, "author"), "name"));
+      const likeCount = pickText(getValue(comment, "like_count"));
+      const replyCount = pickText(getValue(comment, "reply_count"));
+      const isPinned = pickBoolean(getValue(comment, "is_pinned")) ?? false;
+      const publishedText = pickText(getValue(comment, "published_time"));
+
+      return {
+        threadId,
+        text,
+        ...(authorName ? { authorName } : {}),
+        ...(likeCount ? { likeCount } : {}),
+        ...(replyCount ? { replyCount } : {}),
+        isPinned,
+        ...(publishedText ? { publishedText } : {})
+      } satisfies YouTubeCommentThread;
+    })
+    .filter((thread): thread is YouTubeCommentThread => thread !== null);
+}
+
+export function normalizeCommentPage(
+  response: unknown,
+  reference: YouTubeVideoLookup,
+  options: { sortBy: YouTubeCommentSortBy; maxResults?: number }
+): YouTubeCommentPage {
+  const contents = getValue(asRecord(response), "contents");
+  const allThreads = extractCommentThreads(contents);
+  const threads = allThreads.slice(0, options.maxResults ?? Number.POSITIVE_INFINITY);
+
+  return {
+    kind: "comments",
+    videoId: reference.id,
+    canonicalUrl: reference.canonicalUrl,
+    sortBy: options.sortBy,
+    pageSize: threads.length,
+    threads
+  };
 }
 
 function asRecord(value: unknown): UnknownRecord | undefined {
