@@ -8,6 +8,7 @@ import {
 } from "../lib/mcp-errors.js";
 
 import {
+  DEFAULT_COMMENT_RESULTS,
   DEFAULT_PLAYLIST_RESULTS,
   DEFAULT_SEARCH_RESULTS,
   MAX_PLAYLIST_RESULTS,
@@ -15,6 +16,9 @@ import {
   type YouTubeChannelInput,
   type YouTubeChannelLookup,
   type YouTubeChannelRecord,
+  type YouTubeCommentPage,
+  type YouTubeCommentQuery,
+  type YouTubeCommentSortBy,
   type YouTubePlaylistQuery,
   type YouTubeSearchFeature,
   type YouTubeSearchFilters,
@@ -42,6 +46,7 @@ import {
   extractChannelVideos,
   formatTranscriptText,
   normalizeChannelRecord,
+  normalizeCommentPage,
   normalizePlaylistRecord,
   normalizeSearchPage,
   normalizeTranscriptRecord,
@@ -74,6 +79,13 @@ type SearchFeedLike = Awaited<ReturnType<NonNullable<InnertubeClientLike["search
 type PlaylistFeedLike = Awaited<
   ReturnType<NonNullable<InnertubeClientLike["getPlaylist"]>>
 >;
+type CommentsLike = Awaited<ReturnType<NonNullable<InnertubeClientLike["getComments"]>>>;
+
+type CommentContinuationState = {
+  videoId: string;
+  sortBy: YouTubeCommentSortBy;
+  response: CommentsLike;
+};
 
 type SearchContinuationState = {
   query: string;
@@ -120,6 +132,20 @@ type NormalizedPlaylistRequest =
 const SEARCH_TTL_MS = 2 * 60 * 1000;
 const PLAYLIST_TTL_MS = 2 * 60 * 1000;
 const TRANSCRIPT_TTL_MS = 24 * 60 * 60 * 1000;
+const COMMENT_TTL_MS = 2 * 60 * 1000;
+
+const SORT_MAP: Record<YouTubeCommentSortBy, "TOP_COMMENTS" | "NEWEST_FIRST"> = {
+  top_comments: "TOP_COMMENTS",
+  new_comments: "NEWEST_FIRST"
+};
+
+function isCommentsDisabledError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.name === "InnertubeError" &&
+    error.message.includes("Comments page did not have any content")
+  );
+}
 
 export function createYouTubeService(
   options: CreateYouTubeServiceOptions = {}
@@ -402,6 +428,61 @@ export function createYouTubeService(
       }
 
       return applyTranscriptFormat(cachedRecord, includeTimestamps);
+    },
+    getComments: async (query: YouTubeCommentQuery): Promise<YouTubeCommentPage> => {
+      if (query.pageToken) {
+        throw new NotAvailableError(
+          "This comment page token is missing or expired. Run the comments lookup again to continue.",
+          { cause: "comment_page_token_expired" }
+        );
+      }
+
+      const sortBy: YouTubeCommentSortBy = query.sortBy ?? "top_comments";
+      const maxResults = query.maxResults ?? DEFAULT_COMMENT_RESULTS;
+      const reference = expectReferenceKind(query.video, parser, "video");
+      const cacheKey = `comment:${reference.id}:sort=${sortBy}:max=${maxResults}`;
+      const cached = youtubeCache.getLookup<YouTubeCommentPage>(cacheKey);
+
+      if (cached) {
+        logger.debug("youtube comment cache hit", {
+          id: reference.id,
+          sortBy,
+          maxResults
+        });
+        return cached;
+      }
+
+      const upstream = await client.getClient();
+
+      logger.debug("fetching youtube comments", {
+        id: reference.id,
+        sortBy,
+        maxResults
+      });
+
+      const response = await policy.execute(
+        async () => {
+          try {
+            return await upstream.getComments(reference.id, SORT_MAP[sortBy]);
+          } catch (err) {
+            if (isCommentsDisabledError(err)) {
+              throw new NotAvailableError(
+                "Comments are disabled for this video.",
+                { cause: "comments_disabled" }
+              );
+            }
+            throw err;
+          }
+        },
+        {
+          label: "comment lookup",
+          target: reference.id
+        }
+      );
+
+      const record = normalizeCommentPage(response, reference, { sortBy, maxResults });
+
+      return youtubeCache.setLookup(cacheKey, record, COMMENT_TTL_MS);
     }
   };
 }
