@@ -296,7 +296,7 @@ describe("channel lookups", () => {
     const error = await service.getChannel("UCBJycsmduvYEL83R_U4JriQ").catch(e => e);
 
     expect(error).toBeInstanceOf(NotAvailableError);
-    expect((error as NotAvailableError).cause).toBe("channel_unavailable");
+    expect((error as NotAvailableError).causeDetail).toBe("channel_unavailable");
   });
 
   it("remaps InnertubeError with 'Invalid channel' message to NotAvailableError", async () => {
@@ -317,7 +317,7 @@ describe("channel lookups", () => {
     const error = await service.getChannel("UCBJycsmduvYEL83R_U4JriQ").catch(e => e);
 
     expect(error).toBeInstanceOf(NotAvailableError);
-    expect((error as NotAvailableError).cause).toBe("channel_unavailable");
+    expect((error as NotAvailableError).causeDetail).toBe("channel_unavailable");
   });
 
   it("returns empty recentVideos array when has_videos is false", async () => {

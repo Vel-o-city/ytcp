@@ -39,6 +39,7 @@ import {
 import { createYouTubeCache, type YouTubeCache } from "./cache.js";
 import {
   createTranscriptRecord,
+  extractChannelVideos,
   formatTranscriptText,
   normalizeChannelRecord,
   normalizePlaylistRecord,
@@ -238,13 +239,49 @@ export function createYouTubeService(
         source: reference.source
       });
 
-      const response = await policy.execute(() => upstream.getChannel(target), {
-        label: "channel lookup",
-        target
-      });
-      const record = normalizeChannelRecord(response, reference);
+      const response = await policy.execute(
+        async () => {
+          try {
+            return await upstream.getChannel(target);
+          } catch (error) {
+            if (isChannelUnavailableError(error)) {
+              throw new NotAvailableError(
+                "This YouTube channel is not available or does not exist.",
+                { cause: "channel_unavailable" }
+              );
+            }
 
-      return youtubeCache.setLookup(cacheKey, record);
+            throw error;
+          }
+        },
+        {
+          label: "channel lookup",
+          target
+        }
+      );
+
+      const channelResponse = asRecord(response);
+      let recentVideos: import("./contracts.js").YouTubeChannelVideoItem[] = [];
+
+      if (channelResponse?.has_videos === true && typeof channelResponse.getVideos === "function") {
+        logger.debug("fetching youtube channel videos", { target });
+
+        const getVideos = channelResponse.getVideos as () => Promise<unknown>;
+        const videosResponse = await policy.execute(
+          () => getVideos(),
+          {
+            label: "channel videos lookup",
+            target
+          }
+        );
+
+        recentVideos = extractChannelVideos(videosResponse);
+      }
+
+      const record = normalizeChannelRecord(response, reference);
+      const recordWithVideos = { ...record, recentVideos };
+
+      return youtubeCache.setLookup(cacheKey, recordWithVideos);
     },
     searchVideos: async (input: YouTubeSearchQuery): Promise<YouTubeSearchPage> => {
       const searchRequest = normalizeSearchQuery(input);
@@ -518,6 +555,22 @@ function extractBrowseId(value: unknown): string | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function isChannelUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (error.name === "ChannelError") {
+    return true;
+  }
+
+  if (error.name === "InnertubeError" && error.message.includes("Invalid channel")) {
+    return true;
+  }
+
+  return false;
 }
 
 function createCacheKey(reference: ParsedYouTubeReference): string {
