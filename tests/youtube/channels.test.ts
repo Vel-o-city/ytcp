@@ -171,6 +171,168 @@ describe("channel video item normalization", () => {
   });
 });
 
+describe("channel URL variant resolution paths", () => {
+  // Each entry describes one supported input form and which resolution branch it takes.
+  const CHANNEL_ID = "UCBJycsmduvYEL83R_U4JriQ";
+  const BARE_HANDLE = "@mkbhd";
+
+  const cases: Array<{
+    label: string;
+    input: string;
+    expectsResolveURL: boolean;
+    // If resolveURL is expected, the mock returns this browseId.
+    browseIdResult?: string;
+    // The value ultimately passed to getChannel().
+    expectedGetChannelArg: string;
+  }> = [
+    {
+      label: "bare UC... channel ID",
+      input: CHANNEL_ID,
+      expectsResolveURL: false,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "bare @handle (resolveURL attempt then fallback)",
+      input: BARE_HANDLE,
+      expectsResolveURL: true,
+      browseIdResult: CHANNEL_ID,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "https://youtube.com/@handle URL",
+      input: "https://www.youtube.com/@mkbhd",
+      expectsResolveURL: true,
+      browseIdResult: CHANNEL_ID,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "https://youtube.com/@handle/videos subpage URL",
+      input: "https://www.youtube.com/@mkbhd/videos",
+      expectsResolveURL: true,
+      browseIdResult: CHANNEL_ID,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "https://youtube.com/channel/UC... URL",
+      input: `https://www.youtube.com/channel/${CHANNEL_ID}`,
+      expectsResolveURL: false,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "https://youtube.com/c/CustomName URL",
+      input: "https://www.youtube.com/c/MKBHDTech",
+      expectsResolveURL: true,
+      browseIdResult: CHANNEL_ID,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "https://youtube.com/user/Username URL",
+      input: "https://www.youtube.com/user/marquesbrownlee",
+      expectsResolveURL: true,
+      browseIdResult: CHANNEL_ID,
+      expectedGetChannelArg: CHANNEL_ID
+    },
+    {
+      label: "https://youtube.com/feeds/videos.xml?channel_id=UC... feed URL",
+      input: `https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}`,
+      expectsResolveURL: false,
+      expectedGetChannelArg: CHANNEL_ID
+    }
+  ];
+
+  const baseChannelResponse = {
+    metadata: {
+      title: "Test Channel",
+      external_id: CHANNEL_ID,
+      vanity_channel_url: "http://www.youtube.com/@testchannel"
+    },
+    header: {
+      subscriber_count_text: "100K subscribers"
+    },
+    has_videos: false,
+    videos: [],
+    getVideos: undefined
+  };
+
+  it.each(cases)(
+    "routes '$label' through the correct resolution branch",
+    async ({ input, expectsResolveURL, browseIdResult, expectedGetChannelArg }) => {
+      const getChannel = vi.fn().mockResolvedValue(baseChannelResponse);
+      const resolveURL = vi.fn().mockResolvedValue(
+        browseIdResult
+          ? { payload: { browseId: browseIdResult } }
+          : {}
+      );
+
+      const service = createYouTubeService({
+        client: {
+          getClient: vi.fn().mockResolvedValue({
+            getChannel,
+            resolveURL
+          }),
+          getConfig: vi.fn().mockReturnValue({}),
+          reset: vi.fn()
+        },
+        logger: createSilentLogger()
+      });
+
+      await service.getChannel(input);
+
+      expect(getChannel).toHaveBeenCalledWith(expectedGetChannelArg);
+
+      if (expectsResolveURL) {
+        expect(resolveURL).toHaveBeenCalled();
+      } else {
+        expect(resolveURL).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it("falls back to handle/customName/username when resolveURL is unavailable", async () => {
+    const getChannel = vi.fn().mockResolvedValue(baseChannelResponse);
+
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getChannel
+          // resolveURL intentionally absent
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await service.getChannel("@mkbhd");
+
+    // Without resolveURL, falls back to the raw handle
+    expect(getChannel).toHaveBeenCalledWith("@mkbhd");
+  });
+
+  it("falls back to handle when resolveURL returns no browseId", async () => {
+    const getChannel = vi.fn().mockResolvedValue(baseChannelResponse);
+    const resolveURL = vi.fn().mockResolvedValue({}); // no payload.browseId
+
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getChannel,
+          resolveURL
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger()
+    });
+
+    await service.getChannel("https://www.youtube.com/@mkbhd");
+
+    expect(resolveURL).toHaveBeenCalled();
+    // Falls back to the handle extracted from the reference
+    expect(getChannel).toHaveBeenCalledWith("@mkbhd");
+  });
+});
+
 describe("channel lookups", () => {
   function makeChannelResponse(options: {
     has_videos?: boolean;
