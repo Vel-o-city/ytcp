@@ -7,7 +7,7 @@ type InnertubeInstance = Awaited<ReturnType<typeof Innertube.create>>;
 
 export type InnertubeClientLike = Pick<
   InnertubeInstance,
-  "getBasicInfo" | "getInfo" | "getPlaylist" | "getChannel" | "search" | "resolveURL"
+  "getBasicInfo" | "getInfo" | "getPlaylist" | "getChannel" | "search" | "resolveURL" | "getComments"
 >;
 
 export type CreateInnertubeClientOptions = {
