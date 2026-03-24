@@ -654,7 +654,7 @@ function shapeSearchPageData(page: YouTubeSearchPage): Record<string, unknown> {
   };
 }
 
-function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknown> {
+export function shapeVideoRecordData(record: YouTubeVideoRecord): Record<string, unknown> {
   return {
     id: record.id,
     canonicalUrl: record.canonicalUrl,
@@ -710,7 +710,7 @@ function shapePlaylistRecordData(record: YouTubePlaylistRecord): Record<string, 
   };
 }
 
-function shapeChannelRecordData(record: YouTubeChannelRecord): Record<string, unknown> {
+export function shapeChannelRecordData(record: YouTubeChannelRecord): Record<string, unknown> {
   return {
     ...(record.id ? { id: record.id } : {}),
     canonicalUrl: record.canonicalUrl,
@@ -739,7 +739,7 @@ function shapeChannelVideoItemData(item: YouTubeChannelVideoItem): Record<string
   };
 }
 
-function shapeTranscriptRecordData(record: YouTubeTranscriptRecord): Record<string, unknown> {
+export function shapeTranscriptRecordData(record: YouTubeTranscriptRecord): Record<string, unknown> {
   return {
     id: record.videoId,
     canonicalUrl: record.canonicalUrl,
