@@ -872,6 +872,12 @@ function parseGetCommentsInput(input: unknown): YouTubeCommentQuery {
     );
   }
 
+  if (hasPageToken && parsed.data.sortBy) {
+    throw new InvalidInputError(
+      "Follow-up comment page requests cannot include `sortBy`; use the returned `pageToken` by itself."
+    );
+  }
+
   if (hasPageToken) {
     return {
       pageToken: parsed.data.pageToken!.trim(),
