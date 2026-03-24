@@ -7,10 +7,15 @@ import {
 } from "../contracts/tool-result.js";
 import { InvalidInputError, NotAvailableError } from "../lib/mcp-errors.js";
 import {
+  DEFAULT_COMMENT_RESULTS,
+  MAX_COMMENT_RESULTS,
   MAX_PLAYLIST_RESULTS,
   MAX_SEARCH_RESULTS,
   type YouTubeChannelRecord,
   type YouTubeChannelVideoItem,
+  type YouTubeCommentPage,
+  type YouTubeCommentQuery,
+  type YouTubeCommentThread,
   type YouTubePlaylistItem,
   type YouTubePlaylistQuery,
   type YouTubePlaylistRecord,
@@ -31,7 +36,7 @@ import { SERVER_INFO } from "./create-server.js";
 
 export type RegisterToolDependencies = {
   youtubeService?: Partial<
-    Pick<YouTubeService, "getVideo" | "getPlaylist" | "getChannel" | "searchVideos" | "getTranscript">
+    Pick<YouTubeService, "getVideo" | "getPlaylist" | "getChannel" | "searchVideos" | "getTranscript" | "getComments">
   >;
 };
 
@@ -88,6 +93,14 @@ const getChannelInputSchema = z
     channel: z.string().trim().min(1).max(500)
   })
   .strict();
+const getCommentsInputSchema = z
+  .object({
+    video: z.string().trim().min(1).max(500).optional(),
+    pageToken: z.string().trim().min(1).max(200).optional(),
+    sortBy: z.enum(["top_comments", "new_comments"]).optional(),
+    maxResults: z.number().int().min(1).max(MAX_COMMENT_RESULTS).optional()
+  })
+  .strict();
 
 export function registerTools(
   _server: McpServer,
@@ -98,7 +111,8 @@ export function registerTools(
     dependencies.youtubeService?.getPlaylist &&
     dependencies.youtubeService?.getChannel &&
     dependencies.youtubeService?.searchVideos &&
-    dependencies.youtubeService?.getTranscript
+    dependencies.youtubeService?.getTranscript &&
+    dependencies.youtubeService?.getComments
       ? undefined
       : createYouTubeService();
   const searchVideos =
@@ -110,6 +124,8 @@ export function registerTools(
     dependencies.youtubeService?.getChannel ?? defaultYouTubeService?.getChannel;
   const getTranscript =
     dependencies.youtubeService?.getTranscript ?? defaultYouTubeService?.getTranscript;
+  const getComments =
+    dependencies.youtubeService?.getComments ?? defaultYouTubeService?.getComments;
 
   _server.registerTool(
     "server_status",
@@ -311,6 +327,40 @@ export function registerTools(
         return createSuccessResult({
           summary: summarizeSearchPage(page),
           data: shapeSearchPageData(page)
+        });
+      } catch (error) {
+        return createResultFromError(error);
+      }
+    }
+  );
+
+  _server.registerTool(
+    "get_comments",
+    {
+      description:
+        "Fetch top-level comment threads for a public YouTube video from a canonical URL or bare 11-character ID, with optional sort controls.",
+      inputSchema: getCommentsInputSchema.shape,
+      annotations: {
+        readOnlyHint: true
+      }
+    },
+    async args => {
+      try {
+        if (!getComments) {
+          throw new NotAvailableError(
+            "Comment retrieval is not configured for this ytcp build.",
+            {
+              cause: "comment_lookup_unconfigured"
+            }
+          );
+        }
+
+        const input = parseGetCommentsInput(args);
+        const page = await getComments(input);
+
+        return createSuccessResult({
+          summary: summarizeCommentPage(page),
+          data: shapeCommentPageData(page)
         });
       } catch (error) {
         return createResultFromError(error);
@@ -774,5 +824,98 @@ function shapeSearchResultData(result: YouTubeSearchResult): Record<string, unkn
     ...(result.thumbnails.length > 0 ? { thumbnails: result.thumbnails } : {}),
     isLive: result.isLive,
     isUpcoming: result.isUpcoming
+  };
+}
+
+function parseGetCommentsInput(input: unknown): YouTubeCommentQuery {
+  const parsed = getCommentsInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const path = firstIssue?.path.join(".") ?? "video";
+
+    if (path === "maxResults") {
+      throw new InvalidInputError(
+        `\`maxResults\` must be between 1 and ${MAX_COMMENT_RESULTS}.`
+      );
+    }
+
+    if (path === "pageToken") {
+      throw new InvalidInputError(
+        "Provide a non-empty `pageToken` string to request the next comment page."
+      );
+    }
+
+    if (path === "sortBy") {
+      throw new InvalidInputError(
+        "Unsupported `sortBy` value. Use `top_comments` or `new_comments`."
+      );
+    }
+
+    throw new InvalidInputError(
+      "Provide a YouTube video URL or bare 11-character video ID in `video`."
+    );
+  }
+
+  const hasVideo = typeof parsed.data.video === "string";
+  const hasPageToken = typeof parsed.data.pageToken === "string";
+
+  if (!hasVideo && !hasPageToken) {
+    throw new InvalidInputError(
+      "Either `video` or `pageToken` must be provided."
+    );
+  }
+
+  if (hasVideo && hasPageToken) {
+    throw new InvalidInputError(
+      "Provide either `video` or `pageToken`, not both."
+    );
+  }
+
+  if (hasPageToken) {
+    return {
+      pageToken: parsed.data.pageToken!.trim(),
+      ...(typeof parsed.data.maxResults === "number"
+        ? { maxResults: parsed.data.maxResults }
+        : {})
+    };
+  }
+
+  return {
+    video: parsed.data.video!.trim(),
+    ...(parsed.data.sortBy ? { sortBy: parsed.data.sortBy } : {}),
+    ...(typeof parsed.data.maxResults === "number"
+      ? { maxResults: parsed.data.maxResults }
+      : {})
+  };
+}
+
+function summarizeCommentPage(page: YouTubeCommentPage): string {
+  const sortLabel = page.sortBy === "top_comments" ? "top" : "newest";
+  const summary = `Loaded ${page.pageSize} ${sortLabel} comments for video ${page.videoId}.`;
+
+  return page.nextPageToken ? `${summary} More are available.` : summary;
+}
+
+function shapeCommentThreadData(thread: YouTubeCommentThread): Record<string, unknown> {
+  return {
+    threadId: thread.threadId,
+    text: thread.text,
+    ...(thread.authorName ? { authorName: thread.authorName } : {}),
+    ...(thread.likeCount ? { likeCount: thread.likeCount } : {}),
+    ...(thread.replyCount ? { replyCount: thread.replyCount } : {}),
+    ...(thread.isPinned ? { isPinned: thread.isPinned } : {}),
+    ...(thread.publishedText ? { publishedText: thread.publishedText } : {})
+  };
+}
+
+function shapeCommentPageData(page: YouTubeCommentPage): Record<string, unknown> {
+  return {
+    videoId: page.videoId,
+    canonicalUrl: page.canonicalUrl,
+    sortBy: page.sortBy,
+    pageSize: page.pageSize,
+    ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}),
+    threads: page.threads.map(shapeCommentThreadData)
   };
 }

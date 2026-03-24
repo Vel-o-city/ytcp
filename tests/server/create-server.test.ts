@@ -39,7 +39,8 @@ describe("createServer", () => {
       "get_playlist",
       "get_channel",
       "get_transcript",
-      "search_videos"
+      "search_videos",
+      "get_comments"
     ]);
     expect(videoTool.description).toContain("Fetch compact details");
     expect(videoTool.annotations).toEqual({ readOnlyHint: true });
