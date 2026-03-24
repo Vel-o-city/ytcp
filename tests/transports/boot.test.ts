@@ -214,6 +214,29 @@ describe("root transport boot surface", () => {
             isUpcoming: false
           }
         ]
+      }),
+      getChannel: vi.fn().mockResolvedValue({
+        kind: "channel",
+        canonicalUrl: "https://www.youtube.com/@exampledev",
+        source: "handle",
+        id: "UCBJycsmduvYEL83R_U4JriQ",
+        handle: "@ExampleDev",
+        title: "Example Dev",
+        description: "Building things in public.",
+        subscriberCountText: "50K subscribers",
+        videoCountText: "120 videos",
+        thumbnails: ["https://yt3.ggpht.com/exampledev.jpg"],
+        recentVideos: [
+          {
+            id: "dQw4w9WgXcQ",
+            canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            title: "How to Build an MCP Server",
+            thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+            publishedText: "1 week ago",
+            durationText: "18:42",
+            viewCountText: "12K views"
+          }
+        ]
       })
     };
     const serverFactory = vi.fn(() => {
@@ -247,6 +270,11 @@ describe("root transport boot surface", () => {
         _registeredTools: Record<string, RegisteredTool>;
       }
     )._registeredTools.get_playlist;
+    const channelTool = (
+      stdioRuntime.server as unknown as {
+        _registeredTools: Record<string, RegisteredTool>;
+      }
+    )._registeredTools.get_channel;
     const stdioResult = await tool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     });
@@ -257,6 +285,9 @@ describe("root transport boot surface", () => {
     const stdioTranscriptResult = await transcriptTool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       includeTimestamps: true
+    });
+    const stdioChannelResult = await channelTool.handler({
+      channel: "https://www.youtube.com/@exampledev"
     });
 
     await httpRuntime.handleRequest(
@@ -279,6 +310,11 @@ describe("root transport boot surface", () => {
         _registeredTools: Record<string, RegisteredTool>;
       }
     )._registeredTools.get_playlist;
+    const httpChannelTool = (
+      createdServers[1] as unknown as {
+        _registeredTools: Record<string, RegisteredTool>;
+      }
+    )._registeredTools.get_channel;
     const httpResult = await httpTool.handler({
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     });
@@ -290,11 +326,15 @@ describe("root transport boot surface", () => {
       video: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       includeTimestamps: true
     });
+    const httpChannelResult = await httpChannelTool.handler({
+      channel: "https://www.youtube.com/@exampledev"
+    });
 
     expect(serverFactory).toHaveBeenCalledTimes(2);
     expect(stdioResult).toEqual(httpResult);
     expect(stdioPlaylistResult).toEqual(httpPlaylistResult);
     expect(stdioTranscriptResult).toEqual(httpTranscriptResult);
+    expect(stdioChannelResult).toEqual(httpChannelResult);
     expect(httpResult).toEqual(
       createSuccessResult({
         summary: 'Loaded public video details for "Build an MCP Server".',
@@ -382,6 +422,32 @@ describe("root transport boot surface", () => {
         }
       })
     );
+    expect(httpChannelResult).toEqual(
+      createSuccessResult({
+        summary: 'Loaded public channel metadata for "Example Dev".',
+        data: {
+          id: "UCBJycsmduvYEL83R_U4JriQ",
+          canonicalUrl: "https://www.youtube.com/@exampledev",
+          handle: "@ExampleDev",
+          title: "Example Dev",
+          description: "Building things in public.",
+          subscriberCountText: "50K subscribers",
+          videoCountText: "120 videos",
+          thumbnails: ["https://yt3.ggpht.com/exampledev.jpg"],
+          recentVideos: [
+            {
+              id: "dQw4w9WgXcQ",
+              canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+              title: "How to Build an MCP Server",
+              thumbnails: ["https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"],
+              publishedText: "1 week ago",
+              durationText: "18:42",
+              viewCountText: "12K views"
+            }
+          ]
+        }
+      })
+    );
     expect(youtubeService.getVideo).toHaveBeenNthCalledWith(
       1,
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -412,6 +478,20 @@ describe("root transport boot surface", () => {
         includeTimestamps: true
       }
     );
+    expect(youtubeService.getChannel).toHaveBeenNthCalledWith(
+      1,
+      "https://www.youtube.com/@exampledev"
+    );
+    expect(youtubeService.getChannel).toHaveBeenNthCalledWith(
+      2,
+      "https://www.youtube.com/@exampledev"
+    );
+
+    // Prove get_channel is exposed from the same shared server factory for both transports
+    expect(channelTool).toBeDefined();
+    expect(httpChannelTool).toBeDefined();
+    expect(typeof channelTool.handler).toBe("function");
+    expect(typeof httpChannelTool.handler).toBe("function");
 
     await httpRuntime.close();
     await stdioRuntime.close();
