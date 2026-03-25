@@ -10,12 +10,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "live:preflight": "npm run build && npm test",
+    "live:stdio": "tsx scripts/live/stdio.ts",
+    "live:http": "tsx scripts/live/http.ts",
+    "live:verify:stdio": "tsx scripts/live/verify-mcp.ts --transport stdio",
+    "live:verify:http": "tsx scripts/live/verify-mcp.ts --transport http",
+    "live:verify": "tsx scripts/live/verify-mcp.ts --transport both"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.26.0",
     "youtube-caption-extractor": "^1.9.1",
-    "youtubei.js": "^16.0.1",
+    "youtubei.js": "^17.0.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {

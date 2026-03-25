@@ -4,6 +4,7 @@ import type {
   YouTubeCommentSortBy,
   YouTubeCommentThread,
   YouTubePlaylistItem,
+  YouTubeSearchDuration,
   YouTubeSearchFilters,
   YouTubeSearchPage,
   YouTubeSearchQuery,
@@ -215,8 +216,10 @@ export function toInnertubeSearchFilters(
   );
 
   const mapped: NonNullable<InnertubeSearchFilters> = {
-    ...(filters.uploadDate ? { upload_date: filters.uploadDate } : {}),
-    ...(filters.duration ? { duration: filters.duration } : {}),
+    ...(filters.uploadDate && filters.uploadDate !== "hour"
+      ? { upload_date: filters.uploadDate }
+      : {}),
+    ...(filters.duration ? { duration: toInnertubeDuration(filters.duration) } : {}),
     ...(filters.sortBy ? { sort_by: filters.sortBy } : {}),
     ...(normalizedFeatures && normalizedFeatures.length > 0
       ? { features: normalizedFeatures }
@@ -224,6 +227,21 @@ export function toInnertubeSearchFilters(
   };
 
   return Object.keys(mapped).length > 0 ? mapped : undefined;
+}
+
+function toInnertubeDuration(
+  duration: YouTubeSearchDuration
+): NonNullable<InnertubeSearchFilters>["duration"] {
+  switch (duration) {
+    case "short":
+      return "under_three_mins";
+    case "medium":
+      return "three_to_twenty_mins";
+    case "long":
+      return "over_twenty_mins";
+    default:
+      return duration as NonNullable<InnertubeSearchFilters>["duration"];
+  }
 }
 
 export function normalizeSearchPage(
