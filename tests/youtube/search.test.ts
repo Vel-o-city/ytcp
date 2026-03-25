@@ -32,10 +32,14 @@ describe("youtube search normalization", () => {
       })
     ).toEqual({
       upload_date: "week",
-      duration: "long",
+      duration: "over_twenty_mins",
       sort_by: "view_count",
       features: ["hd", "live"]
     });
+    // All three friendly duration labels map to youtubei.js v17 enum names
+    expect(toInnertubeSearchFilters({ duration: "short" })).toEqual({ duration: "under_three_mins" });
+    expect(toInnertubeSearchFilters({ duration: "medium" })).toEqual({ duration: "three_to_twenty_mins" });
+    expect(toInnertubeSearchFilters({ duration: "all" })).toEqual({ duration: "all" });
     expect(toInnertubeSearchFilters()).toBeUndefined();
   });
 
