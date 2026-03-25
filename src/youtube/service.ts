@@ -822,6 +822,8 @@ async function getTranscriptRecord(
       throw error;
     }
 
+    const primaryError = error;
+
     dependencies.logger.warn(
       "youtube primary transcript lookup fell back to secondary extractor",
       {
@@ -831,11 +833,33 @@ async function getTranscriptRecord(
       }
     );
 
-    return getFallbackTranscriptRecord(
-      response,
-      reference,
-      dependencies
-    );
+    try {
+      return await getFallbackTranscriptRecord(
+        response,
+        reference,
+        dependencies
+      );
+    } catch (fallbackError) {
+      // When the primary error was transcript_unavailable and the fallback failed
+      // with an infrastructure error (e.g. InnerTube /player returned 400 or an
+      // empty body), throw the original primary error rather than the fallback's
+      // UpstreamUnavailableError. This preserves the accurate transcript_unavailable
+      // classification so callers do not receive a misleading "temporarily unavailable"
+      // status for a video that genuinely has no transcript.
+      //
+      // If the fallback itself returns a NotAvailableError, propagate that instead
+      // because it may carry additional details (e.g. fallback: true) that are useful
+      // for callers to distinguish the fallback path.
+      if (
+        fallbackError instanceof UpstreamUnavailableError &&
+        primaryError instanceof NotAvailableError &&
+        primaryError.causeDetail === "transcript_unavailable"
+      ) {
+        throw primaryError;
+      }
+
+      throw fallbackError;
+    }
   }
 }
 
