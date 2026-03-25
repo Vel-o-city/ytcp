@@ -292,16 +292,26 @@ export function createYouTubeService(
       if (channelResponse?.has_videos === true && typeof channelResponse.getVideos === "function") {
         logger.debug("fetching youtube channel videos", { target });
 
-        const getVideos = channelResponse.getVideos as () => Promise<unknown>;
-        const videosResponse = await policy.execute(
-          () => getVideos(),
-          {
-            label: "channel videos lookup",
-            target
-          }
-        );
+        try {
+          const getVideos = channelResponse.getVideos as () => Promise<unknown>;
+          const videosResponse = await policy.execute(
+            () => getVideos(),
+            {
+              label: "channel videos lookup",
+              target
+            }
+          );
 
-        recentVideos = extractChannelVideos(videosResponse);
+          recentVideos = extractChannelVideos(videosResponse);
+        } catch (videosError) {
+          logger.warn("channel recent-videos lookup failed, returning metadata without videos", {
+            target,
+            error: videosError instanceof Error ? videosError.message : String(videosError)
+          });
+          // Degrade gracefully: return channel metadata with empty recentVideos
+          // rather than failing the entire channel surface
+          recentVideos = [];
+        }
       }
 
       const record = normalizeChannelRecord(response, reference);

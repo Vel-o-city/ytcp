@@ -570,6 +570,39 @@ describe("channel lookups", () => {
     });
   });
 
+  it("degrades gracefully when getVideos() throws, returning channel metadata with empty recentVideos", async () => {
+    const getVideos = vi.fn().mockRejectedValue(new Error("YouTube videos tab unavailable"));
+
+    const channelResponse = {
+      metadata: {
+        title: "Test Channel",
+        external_id: "UCBJycsmduvYEL83R_U4JriQ"
+      },
+      header: {},
+      has_videos: true,
+      videos: [],
+      getVideos
+    };
+
+    const logger = createSilentLogger();
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getChannel: vi.fn().mockResolvedValue(channelResponse)
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger
+    });
+
+    const record = await service.getChannel("UCBJycsmduvYEL83R_U4JriQ");
+
+    expect(record.id).toBe("UCBJycsmduvYEL83R_U4JriQ");
+    expect(record.recentVideos).toEqual([]);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
   it("returns cached record on second call without calling getChannel again", async () => {
     const channelResponse = makeChannelResponse({ has_videos: false });
     const getChannel = vi.fn().mockResolvedValue(channelResponse);
