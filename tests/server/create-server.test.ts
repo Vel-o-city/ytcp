@@ -52,8 +52,10 @@ describe("createServer", () => {
     expect(transcriptTool.annotations).toEqual({ readOnlyHint: true });
     expect(searchTool.description).toContain("Search public YouTube videos");
     expect(searchTool.annotations).toEqual({ readOnlyHint: true });
-    expect((server as unknown as { _registeredResources: Record<string, unknown> })._registeredResources).toEqual({});
-    expect((server as unknown as { _registeredPrompts: Record<string, unknown> })._registeredPrompts).toEqual({});
+    // Resource templates and prompts are registered via registerResources/registerPrompts inside createServer().
+    // Detailed assertions for those surfaces live in resources.test.ts and prompts.test.ts.
+    expect(Object.keys((server as unknown as { _registeredResourceTemplates: Record<string, unknown> })._registeredResourceTemplates).length).toBeGreaterThan(0);
+    expect(Object.keys((server as unknown as { _registeredPrompts: Record<string, unknown> })._registeredPrompts).length).toBeGreaterThan(0);
     expect(SERVER_INFO).toEqual({
       name: "ytcp",
       version: "0.1.0"
