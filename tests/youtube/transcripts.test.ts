@@ -6,6 +6,7 @@ import {
 } from "../../src/lib/mcp-errors.js";
 import { type YouTubeTranscriptRecord } from "../../src/youtube/contracts.js";
 import { createYouTubeService } from "../../src/youtube/service.js";
+import { createTranscriptFallbackAdapter } from "../../src/youtube/transcript-fallback.js";
 import {
   formatTranscriptText,
   formatTranscriptTimestamp,
@@ -652,5 +653,255 @@ describe("youtube transcript service", () => {
       )
     );
     expect(transcriptFallback.getTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers via the fallback when getTranscript throws an HTTP 400-style error even though caption tracks are present", async () => {
+    // Regression case: youtubei.js getTranscript() hits /youtubei/v1/get_transcript and
+    // gets HTTP 400 even when getInfo() returns caption tracks for the video.
+    // The service must fall through to the fallback adapter in this case.
+    const http400Error = new Error("Status code: 400");
+    const transcriptFallback = {
+      getTranscript: vi.fn().mockResolvedValue({
+        languageCode: "en",
+        languageLabel: "English",
+        segments: [
+          {
+            startMs: 0,
+            endMs: 3000,
+            startTimeSeconds: 0,
+            endTimeSeconds: 3,
+            startTimeText: "0:00",
+            text: "Hello from the fallback path"
+          }
+        ]
+      })
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getInfo: vi.fn().mockResolvedValue({
+            basic_info: {
+              title: "Caption-bearing video",
+              channel: { name: "Test Channel" }
+            },
+            captions: {
+              caption_tracks: [
+                {
+                  name: { text: "English" },
+                  language_code: "en",
+                  kind: "asr",
+                  is_translatable: true
+                }
+              ]
+            },
+            getTranscript: vi.fn().mockRejectedValue(http400Error)
+          }),
+          getBasicInfo: vi.fn(),
+          getPlaylist: vi.fn(),
+          getChannel: vi.fn()
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger(),
+      transcriptFallback
+    });
+
+    await expect(
+      service.getTranscript("aircAruvnKk")
+    ).resolves.toMatchObject({
+      kind: "transcript",
+      videoId: "aircAruvnKk",
+      retrievalMethod: "fallback",
+      language: "English",
+      text: "Hello from the fallback path"
+    });
+
+    expect(transcriptFallback.getTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns transcript_unavailable when getTranscript fails and the fallback also returns no segments", async () => {
+    // True missing-transcript case: both primary and fallback fail to retrieve content.
+    const transcriptFallback = {
+      getTranscript: vi.fn().mockRejectedValue(
+        new NotAvailableError("No public transcript is available for this video.", {
+          cause: "transcript_unavailable",
+          details: { videoId: "dQw4w9WgXcQ", fallback: true }
+        })
+      )
+    };
+    const service = createYouTubeService({
+      client: {
+        getClient: vi.fn().mockResolvedValue({
+          getInfo: vi.fn().mockResolvedValue({
+            basic_info: { title: "No-transcript video" },
+            captions: {
+              caption_tracks: []
+            },
+            getTranscript: vi.fn().mockRejectedValue(
+              new Error("Transcript panel is unavailable")
+            )
+          }),
+          getBasicInfo: vi.fn(),
+          getPlaylist: vi.fn(),
+          getChannel: vi.fn()
+        }),
+        getConfig: vi.fn().mockReturnValue({}),
+        reset: vi.fn()
+      },
+      logger: createSilentLogger(),
+      transcriptFallback
+    });
+
+    const rejection = await service.getTranscript("dQw4w9WgXcQ").catch(e => e);
+    expect(rejection).toBeInstanceOf(NotAvailableError);
+    expect(rejection.causeDetail).toBe("transcript_unavailable");
+  });
+});
+
+describe("InnerTube player-based transcript fallback adapter", () => {
+  it("fetches caption tracks from the InnerTube player endpoint and parses timedtext json3", async () => {
+    const playerResponse = {
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [
+            {
+              baseUrl: "https://www.youtube.com/api/timedtext?v=aircAruvnKk&lang=en",
+              languageCode: "en",
+              name: { simpleText: "English" }
+            }
+          ]
+        }
+      }
+    };
+    const timedTextResponse = {
+      events: [
+        { tStartMs: 0, dDurationMs: 3000, segs: [{ utf8: "Hello " }, { utf8: "world" }] },
+        { tStartMs: 3000, dDurationMs: 2000, segs: [{ utf8: "MCP transcript" }] },
+        // Events without segs (music annotations) should be skipped
+        { tStartMs: 5000, dDurationMs: 1000 }
+      ]
+    };
+
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => playerResponse
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => timedTextResponse
+      });
+
+    const adapter = createTranscriptFallbackAdapter({ fetch: fetchFn });
+    const result = await adapter.getTranscript({ videoId: "aircAruvnKk" });
+
+    expect(result.languageCode).toBe("en");
+    expect(result.languageLabel).toBe("English");
+    expect(result.segments).toHaveLength(2);
+    expect(result.segments[0]).toMatchObject({
+      startMs: 0,
+      endMs: 3000,
+      startTimeSeconds: 0,
+      endTimeSeconds: 3,
+      startTimeText: "0:00",
+      text: "Hello world"
+    });
+    expect(result.segments[1]).toMatchObject({
+      startMs: 3000,
+      endMs: 5000,
+      startTimeSeconds: 3,
+      text: "MCP transcript"
+    });
+
+    // Verify InnerTube Android client context is used
+    const [playerUrl, playerInit] = fetchFn.mock.calls[0];
+    expect(playerUrl).toBe("https://www.youtube.com/youtubei/v1/player");
+    expect(JSON.parse(playerInit.body)).toMatchObject({
+      videoId: "aircAruvnKk",
+      context: { client: { clientName: "ANDROID" } }
+    });
+
+    // Verify timedtext URL has json3 format
+    const timedTextUrl = fetchFn.mock.calls[1][0];
+    expect(timedTextUrl).toContain("fmt=json3");
+  });
+
+  it("selects the requested language track when multiple caption tracks are available", async () => {
+    const playerResponse = {
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [
+            {
+              baseUrl: "https://www.youtube.com/api/timedtext?v=testId&lang=en",
+              languageCode: "en",
+              name: { simpleText: "English" }
+            },
+            {
+              baseUrl: "https://www.youtube.com/api/timedtext?v=testId&lang=de",
+              languageCode: "de",
+              name: { simpleText: "Deutsch" }
+            }
+          ]
+        }
+      }
+    };
+    const timedTextResponse = {
+      events: [
+        { tStartMs: 0, dDurationMs: 2000, segs: [{ utf8: "Hallo Welt" }] }
+      ]
+    };
+
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => playerResponse })
+      .mockResolvedValueOnce({ ok: true, json: async () => timedTextResponse });
+
+    const adapter = createTranscriptFallbackAdapter({ fetch: fetchFn });
+    const result = await adapter.getTranscript({
+      videoId: "testId",
+      languageCode: "de"
+    });
+
+    expect(result.languageCode).toBe("de");
+    expect(result.languageLabel).toBe("Deutsch");
+    expect(result.segments[0].text).toBe("Hallo Welt");
+
+    // Verify the German track URL was used
+    const timedTextUrl = fetchFn.mock.calls[1][0];
+    expect(timedTextUrl).toContain("lang=de");
+  });
+
+  it("returns transcript_unavailable when the player response contains no caption tracks", async () => {
+    const playerResponse = {
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: []
+        }
+      }
+    };
+
+    const fetchFn = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => playerResponse
+    });
+
+    const adapter = createTranscriptFallbackAdapter({ fetch: fetchFn });
+
+    const rejection = await adapter.getTranscript({ videoId: "noTrackVideo" }).catch(e => e);
+    expect(rejection).toBeInstanceOf(NotAvailableError);
+    expect(rejection.causeDetail).toBe("transcript_unavailable");
+  });
+
+  it("returns UpstreamUnavailableError when the player endpoint returns a non-200 status", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400
+    });
+
+    const adapter = createTranscriptFallbackAdapter({ fetch: fetchFn });
+
+    await expect(
+      adapter.getTranscript({ videoId: "aircAruvnKk" })
+    ).rejects.toBeInstanceOf(UpstreamUnavailableError);
   });
 });
