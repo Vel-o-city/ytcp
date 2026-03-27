@@ -1,24 +1,10 @@
 # Claude Desktop Setup
 
-This guide gets ytcp running as a local MCP server for Claude Desktop in under 5 minutes.
+Connect Claude Desktop to ytcp for YouTube search, video details, transcripts, comments, playlists, and channel data -- all through natural conversation.
 
-## Prerequisites
+## Remote Connection (Recommended)
 
-- [Claude Desktop](https://claude.ai/download) installed
-- Node.js 18 or newer (`node --version` to check)
-
-## Step 1 — Clone and build
-
-```bash
-git clone https://github.com/yourusername/ytcp
-cd ytcp
-npm install
-npm run build
-```
-
-Note the absolute path to the folder — you'll need it in the next step.
-
-## Step 2 — Register the server
+The fastest way to get started. No install, no build, no API key.
 
 Open your Claude Desktop config file:
 
@@ -32,7 +18,44 @@ Open your Claude Desktop config file:
 %APPDATA%\Claude\claude_desktop_config.json
 ```
 
-Add the `ytcp` entry inside `mcpServers`. Replace `/absolute/path/to/ytcp` with the real path:
+Add the `ytcp` entry inside `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "ytcp": {
+      "type": "streamableHttp",
+      "url": "https://ytcp.fly.dev/mcp"
+    }
+  }
+}
+```
+
+Restart Claude Desktop. That's it -- no local install required.
+
+## Local Setup (Alternative)
+
+Run ytcp locally via stdio if you need offline access, want to develop, or prefer a self-contained setup.
+
+### Prerequisites
+
+- [Claude Desktop](https://claude.ai/download) installed
+- Node.js 18 or newer (`node --version` to check)
+
+### Step 1 -- Clone and build
+
+```bash
+git clone https://github.com/nicobailey/ytcp
+cd ytcp
+npm install
+npm run build
+```
+
+Note the absolute path to the folder -- you'll need it in the next step.
+
+### Step 2 -- Register the server
+
+Open your Claude Desktop config file (same paths as above) and add the `ytcp` entry. Replace `/absolute/path/to/ytcp` with the real path:
 
 ```json
 {
@@ -47,11 +70,11 @@ Add the `ytcp` entry inside `mcpServers`. Replace `/absolute/path/to/ytcp` with 
 
 If you already have other MCP servers configured, just add the `"ytcp"` block alongside them.
 
-## Step 3 — Restart Claude Desktop
+### Step 3 -- Restart Claude Desktop
 
 Fully quit and reopen Claude Desktop. The server starts automatically when Claude launches.
 
-## Step 4 — Verify it's working
+### Step 4 -- Verify it's working
 
 In Claude, ask:
 
@@ -59,14 +82,27 @@ In Claude, ask:
 
 Claude should call the `server_status` tool and confirm the server is running.
 
+### When to prefer local
+
+- **Offline use** -- works without internet (cached data only)
+- **Development** -- test changes before deploying
+- **Custom modifications** -- fork and extend the toolset
+
 ## Troubleshooting
 
-**Claude doesn't see the server**
+**429 "Rate limit exceeded"**
+- You're sending too many requests. Wait for the duration indicated in the Retry-After header, then retry. Claude Desktop sessions normally stay well within the 30 req/min limit.
+
+**Connection refused or timeout (remote)**
+- Check that the hosted service is running: `curl https://ytcp.fly.dev/health` should return `{"status":"ok","uptime":N}`
+- If the service is temporarily down, try again in a few minutes.
+
+**Claude doesn't see the server (local)**
 - Make sure the path in `args` is absolute, not relative
 - Confirm `npm run build` completed without errors (`build/` folder should exist)
 - Check that Node.js 18+ is in your PATH: `node --version`
 
-**"Cannot find module" error**
+**"Cannot find module" error (local)**
 - Re-run `npm install && npm run build`
 - Confirm the path points to `build/transports/stdio.js`, not `src/`
 
@@ -76,7 +112,7 @@ Claude should call the `server_status` tool and confirm the server is running.
 
 ## Getting the most out of it
 
-Once connected, Claude has access to these tools automatically — just ask naturally:
+Once connected, Claude has access to these tools automatically -- just ask naturally:
 
 - *"Search YouTube for recent talks on LLM evaluation"*
 - *"Get the transcript of [YouTube URL] and summarize the main points"*
