@@ -2,11 +2,14 @@
 
 Connect Claude Desktop to ytcp for YouTube search, video details, transcripts, comments, playlists, and channel data -- all through natural conversation.
 
-## Remote Connection (Recommended)
+Run ytcp locally via stdio if you want a self-contained setup while hosted deployment is being finalized.
 
-The fastest way to get started. No install, no build, no API key.
+### Prerequisites
 
-Open your Claude Desktop config file:
+- [Claude Desktop](https://claude.ai/download) installed
+- Node.js 18 or newer (`node --version` to check)
+
+### Claude Desktop config file
 
 **macOS**
 ```
@@ -18,29 +21,7 @@ Open your Claude Desktop config file:
 %APPDATA%\Claude\claude_desktop_config.json
 ```
 
-Add the `ytcp` entry inside `mcpServers`:
-
-```json
-{
-  "mcpServers": {
-    "ytcp": {
-      "type": "streamableHttp",
-      "url": "https://ytcp.fly.dev/mcp"
-    }
-  }
-}
-```
-
-Restart Claude Desktop. That's it -- no local install required.
-
-## Local Setup (Alternative)
-
-Run ytcp locally via stdio if you need offline access, want to develop, or prefer a self-contained setup.
-
-### Prerequisites
-
-- [Claude Desktop](https://claude.ai/download) installed
-- Node.js 18 or newer (`node --version` to check)
+## Local Setup
 
 ### Step 1 -- Clone and build
 
@@ -55,7 +36,7 @@ Note the absolute path to the folder -- you'll need it in the next step.
 
 ### Step 2 -- Register the server
 
-Open your Claude Desktop config file (same paths as above) and add the `ytcp` entry. Replace `/absolute/path/to/ytcp` with the real path:
+Open your Claude Desktop config file and add the `ytcp` entry. Replace `/absolute/path/to/ytcp` with the real path:
 
 ```json
 {
@@ -82,20 +63,13 @@ In Claude, ask:
 
 Claude should call the `server_status` tool and confirm the server is running.
 
-### When to prefer local
+### Why local is the current documented path
 
-- **Offline use** -- works without internet (cached data only)
 - **Development** -- test changes before deploying
 - **Custom modifications** -- fork and extend the toolset
+- **Stable setup** -- hosted connection instructions will be added after deployment is finalized
 
 ## Troubleshooting
-
-**429 "Rate limit exceeded"**
-- You're sending too many requests. Wait for the duration indicated in the Retry-After header, then retry. Claude Desktop sessions normally stay well within the 30 req/min limit.
-
-**Connection refused or timeout (remote)**
-- Check that the hosted service is running: `curl https://ytcp.fly.dev/health` should return `{"status":"ok","uptime":N}`
-- If the service is temporarily down, try again in a few minutes.
 
 **Claude doesn't see the server (local)**
 - Make sure the path in `args` is absolute, not relative

@@ -1,19 +1,6 @@
 # HTTP Transport
 
-ytcp ships a **Streamable HTTP transport** so you can connect any MCP client remotely -- no local install required.
-
-## Hosted Endpoint
-
-A public hosted instance is available at:
-
-```
-https://ytcp.fly.dev/mcp
-```
-
-- No API key or authentication required -- the service is read-only and public
-- Requests are rate-limited to 30 per minute per IP (see [Rate Limiting](#rate-limiting))
-- Repeated lookups benefit from in-memory caching (5 min TTL for video/channel/search, 2 min for continuations)
-- Health check: `GET https://ytcp.fly.dev/health` returns `{"status":"ok","uptime":N}`
+ytcp ships a **Streamable HTTP transport** so you can run the server locally or behind your own deployment target.
 
 ## Rate Limiting
 
@@ -38,7 +25,7 @@ Returns:
 ```
 
 - `uptime` is the server uptime in seconds
-- Used by Fly.io for liveness monitoring (checked every 30s)
+- Useful for uptime and liveness monitoring
 - Not rate-limited
 
 ## Local Development
@@ -74,27 +61,14 @@ Each connecting client gets an isolated MCP session. Sessions are independent --
 
 ## Connecting from Claude Desktop
 
-To point Claude Desktop at the hosted instance (or your own deployment):
-
-```json
-{
-  "mcpServers": {
-    "ytcp": {
-      "type": "streamableHttp",
-      "url": "https://ytcp.fly.dev/mcp"
-    }
-  }
-}
-```
-
-See [Claude Desktop Setup](./claude-desktop-setup.md) for the full guide.
+See [Claude Desktop Setup](./claude-desktop-setup.md) for the local stdio setup. Hosted connection instructions will be documented once the public deployment is finalized.
 
 ## Connecting from other MCP clients
 
 Any client that supports the MCP Streamable HTTP transport can connect:
 
 ```
-POST https://ytcp.fly.dev/mcp
+POST http://127.0.0.1:3001/mcp
 Content-Type: application/json
 ```
 
