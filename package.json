@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:prod": "tsc -p tsconfig.build.json",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "live:preflight": "npm run build && npm test",
