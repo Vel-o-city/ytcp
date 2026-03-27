@@ -42,6 +42,10 @@ import {
 } from "./client.js";
 import { createYouTubeCache, type YouTubeCache } from "./cache.js";
 import {
+  createCoalescingCache,
+  type CoalescingCache
+} from "./coalescing-cache.js";
+import {
   createTranscriptRecord,
   extractChannelVideos,
   formatTranscriptText,
@@ -72,7 +76,7 @@ export type CreateYouTubeServiceOptions = CreateInnertubeClientOptions & {
   parser?: (input: string) => ParsedYouTubeReference;
   policy?: YouTubeRequestPolicy;
   transcriptFallback?: TranscriptFallbackAdapter;
-  youtubeCache?: YouTubeCache;
+  youtubeCache?: YouTubeCache | CoalescingCache;
 };
 
 type SearchFeedLike = Awaited<ReturnType<NonNullable<InnertubeClientLike["search"]>>>;
@@ -153,7 +157,11 @@ export function createYouTubeService(
   const createContinuationToken = options.createContinuationToken ?? randomUUID;
   const logger = options.logger ?? createLogger({ name: "ytcp.youtube.service" });
   const parser = options.parser ?? parseYouTubeInput;
-  const youtubeCache = options.youtubeCache ?? createYouTubeCache();
+  const rawCache = options.youtubeCache ?? createYouTubeCache();
+  const youtubeCache: CoalescingCache =
+    "getOrFetch" in rawCache
+      ? (rawCache as CoalescingCache)
+      : createCoalescingCache(rawCache);
   const policy = options.policy ?? createYouTubeRequestPolicy();
   const transcriptFallback =
     options.transcriptFallback ?? createTranscriptFallbackAdapter();
@@ -169,21 +177,15 @@ export function createYouTubeService(
     getVideo: async (input: YouTubeVideoInput): Promise<YouTubeVideoRecord> => {
       const reference = expectReferenceKind(input, parser, "video");
       const cacheKey = createCacheKey(reference);
-      const cached = youtubeCache.getLookup<YouTubeVideoRecord>(cacheKey);
 
-      if (cached) {
-        logger.debug("youtube video cache hit", { id: reference.id });
-        return cached;
-      }
+      return youtubeCache.getOrFetch<YouTubeVideoRecord>(cacheKey, async () => {
+        const upstream = await client.getClient();
 
-      const upstream = await client.getClient();
+        logger.debug("fetching youtube video", { id: reference.id, source: reference.source });
 
-      logger.debug("fetching youtube video", { id: reference.id, source: reference.source });
-
-      const response = await getVideoLookupResponse(upstream, reference, policy, logger);
-      const record = normalizeVideoRecord(response, reference);
-
-      return youtubeCache.setLookup(cacheKey, record);
+        const response = await getVideoLookupResponse(upstream, reference, policy, logger);
+        return normalizeVideoRecord(response, reference);
+      });
     },
     getPlaylist: async (
       input: YouTubePlaylistInput | YouTubePlaylistQuery
@@ -206,97 +208,81 @@ export function createYouTubeService(
         playlistRequest.reference,
         playlistRequest.maxResults
       );
-      const cached = youtubeCache.getLookup<YouTubePlaylistRecord>(cacheKey);
 
-      if (cached) {
-        logger.debug("youtube playlist cache hit", {
+      return youtubeCache.getOrFetch<YouTubePlaylistRecord>(cacheKey, async () => {
+        const upstream = await client.getClient();
+
+        logger.debug("fetching youtube playlist", {
           id: playlistRequest.reference.id,
+          source: playlistRequest.reference.source,
           maxResults: playlistRequest.maxResults
         });
-        return cached;
-      }
 
-      const upstream = await client.getClient();
-
-      logger.debug("fetching youtube playlist", {
-        id: playlistRequest.reference.id,
-        source: playlistRequest.reference.source,
-        maxResults: playlistRequest.maxResults
-      });
-
-      const response = await policy.execute(
-        () => upstream.getPlaylist(playlistRequest.reference.id),
-        {
-          label: "playlist lookup",
-          target: playlistRequest.reference.id
-        }
-      );
-      const record = buildPlaylistRecord(
-        response,
-        playlistRequest.reference,
-        playlistRequest.maxResults,
-        {
-          createContinuationToken,
-          youtubeCache
-        }
-      );
-
-      return youtubeCache.setLookup(cacheKey, record, PLAYLIST_TTL_MS);
+        const response = await policy.execute(
+          () => upstream.getPlaylist(playlistRequest.reference.id),
+          {
+            label: "playlist lookup",
+            target: playlistRequest.reference.id
+          }
+        );
+        return buildPlaylistRecord(
+          response,
+          playlistRequest.reference,
+          playlistRequest.maxResults,
+          {
+            createContinuationToken,
+            youtubeCache
+          }
+        );
+      }, PLAYLIST_TTL_MS);
     },
     getChannel: async (
       input: YouTubeChannelInput
     ): Promise<YouTubeChannelRecord> => {
       const reference = expectReferenceKind(input, parser, "channel");
       const cacheKey = createCacheKey(reference);
-      const cached = youtubeCache.getLookup<YouTubeChannelRecord>(cacheKey);
 
-      if (cached) {
-        logger.debug("youtube channel cache hit", {
-          target: reference.channelId ?? reference.handle ?? reference.canonicalUrl
+      return youtubeCache.getOrFetch<YouTubeChannelRecord>(cacheKey, async () => {
+        const upstream = await client.getClient();
+        const target = await resolveChannelTarget(upstream, reference, policy, logger);
+
+        logger.debug("fetching youtube channel", {
+          target,
+          source: reference.source
         });
-        return cached;
-      }
 
-      const upstream = await client.getClient();
-      const target = await resolveChannelTarget(upstream, reference, policy, logger);
+        const response = await policy.execute(
+          async () => {
+            try {
+              return await upstream.getChannel(target);
+            } catch (error) {
+              if (isChannelUnavailableError(error)) {
+                throw new NotAvailableError(
+                  "This YouTube channel is not available or does not exist.",
+                  { cause: "channel_unavailable" }
+                );
+              }
 
-      logger.debug("fetching youtube channel", {
-        target,
-        source: reference.source
-      });
-
-      const response = await policy.execute(
-        async () => {
-          try {
-            return await upstream.getChannel(target);
-          } catch (error) {
-            if (isChannelUnavailableError(error)) {
-              throw new NotAvailableError(
-                "This YouTube channel is not available or does not exist.",
-                { cause: "channel_unavailable" }
-              );
+              throw error;
             }
-
-            throw error;
+          },
+          {
+            label: "channel lookup",
+            target
           }
-        },
-        {
-          label: "channel lookup",
-          target
-        }
-      );
+        );
 
-      const channelResponse = asRecord(response);
-      let recentVideos: import("./contracts.js").YouTubeChannelVideoItem[] = [];
+        const channelResponse = asRecord(response);
+        let recentVideos: import("./contracts.js").YouTubeChannelVideoItem[] = [];
 
-      if (channelResponse?.has_videos === true && typeof channelResponse.getVideos === "function") {
-        logger.debug("fetching youtube channel videos", { target });
+        if (channelResponse?.has_videos === true && typeof channelResponse.getVideos === "function") {
+          logger.debug("fetching youtube channel videos", { target });
 
-        try {
-          const getVideos = channelResponse.getVideos as () => Promise<unknown>;
-          const videosResponse = await policy.execute(
-            () => getVideos(),
-            {
+          try {
+            const getVideos = channelResponse.getVideos as () => Promise<unknown>;
+            const videosResponse = await policy.execute(
+              () => getVideos(),
+              {
               label: "channel videos lookup",
               target
             }
@@ -314,10 +300,9 @@ export function createYouTubeService(
         }
       }
 
-      const record = normalizeChannelRecord(response, reference);
-      const recordWithVideos = { ...record, recentVideos };
-
-      return youtubeCache.setLookup(cacheKey, recordWithVideos);
+        const record = normalizeChannelRecord(response, reference);
+        return { ...record, recentVideos };
+      });
     },
     searchVideos: async (input: YouTubeSearchQuery): Promise<YouTubeSearchPage> => {
       const searchRequest = normalizeSearchQuery(input);
@@ -335,46 +320,37 @@ export function createYouTubeService(
       }
 
       const cacheKey = createSearchCacheKey(searchRequest);
-      const cached = youtubeCache.getLookup<YouTubeSearchPage>(cacheKey);
 
-      if (cached) {
-        logger.debug("youtube search cache hit", {
+      return youtubeCache.getOrFetch<YouTubeSearchPage>(cacheKey, async () => {
+        const upstream = await client.getClient();
+
+        if (!upstream.search) {
+          throw new NotAvailableError(
+            "This YouTube client does not support public search requests.",
+            {
+              cause: "search_unsupported"
+            }
+          );
+        }
+
+        logger.debug("fetching youtube search", {
           query: searchRequest.query,
+          hasFilters: Boolean(searchRequest.filters),
           maxResults: searchRequest.maxResults
         });
-        return cached;
-      }
 
-      const upstream = await client.getClient();
-
-      if (!upstream.search) {
-        throw new NotAvailableError(
-          "This YouTube client does not support public search requests.",
+        const response = await policy.execute(
+          () => upstream.search(searchRequest.query, toInnertubeSearchFilters(searchRequest.filters)),
           {
-            cause: "search_unsupported"
+            label: "search lookup",
+            target: searchRequest.query
           }
         );
-      }
-
-      logger.debug("fetching youtube search", {
-        query: searchRequest.query,
-        hasFilters: Boolean(searchRequest.filters),
-        maxResults: searchRequest.maxResults
-      });
-
-      const response = await policy.execute(
-        () => upstream.search(searchRequest.query, toInnertubeSearchFilters(searchRequest.filters)),
-        {
-          label: "search lookup",
-          target: searchRequest.query
-        }
-      );
-      const page = buildSearchPage(response, searchRequest, {
-        createContinuationToken,
-        youtubeCache
-      });
-
-      return youtubeCache.setLookup(cacheKey, page, SEARCH_TTL_MS);
+        return buildSearchPage(response, searchRequest, {
+          createContinuationToken,
+          youtubeCache
+        });
+      }, SEARCH_TTL_MS);
     },
     getTranscript: async (
       input: YouTubeVideoInput,
@@ -384,60 +360,55 @@ export function createYouTubeService(
       const requestedLanguage = normalizeTranscriptLanguageOption(options.language);
       const includeTimestamps = options.includeTimestamps === true;
       const cacheKey = createTranscriptCacheKey(reference, requestedLanguage);
-      const cached = youtubeCache.getLookup<YouTubeTranscriptRecord>(cacheKey);
+      const baseRecord = await youtubeCache.getOrFetch<YouTubeTranscriptRecord>(
+        cacheKey,
+        async () => {
+          const upstream = await client.getClient();
 
-      if (cached) {
-        logger.debug("youtube transcript cache hit", {
-          id: reference.id,
-          language: requestedLanguage ?? cached.language,
-          includeTimestamps
-        });
-        return applyTranscriptFormat(cached, includeTimestamps);
-      }
+          logger.debug("fetching youtube transcript", {
+            id: reference.id,
+            source: reference.source,
+            language: requestedLanguage,
+            includeTimestamps
+          });
 
-      const upstream = await client.getClient();
+          const response = await getTranscriptLookupResponse(
+            upstream,
+            reference,
+            policy
+          );
+          const transcriptLanguageCatalog = getTranscriptLanguageCatalog(
+            response,
+            reference,
+            requestedLanguage
+          );
+          const record = await getTranscriptRecord(
+            response,
+            reference,
+            {
+              requestedLanguage,
+              includeTimestamps,
+              languageCatalog: transcriptLanguageCatalog,
+              logger,
+              policy,
+              transcriptFallback
+            }
+          );
+          const formatted = applyTranscriptFormat(record, false);
 
-      logger.debug("fetching youtube transcript", {
-        id: reference.id,
-        source: reference.source,
-        language: requestedLanguage,
-        includeTimestamps
-      });
+          // Also cache under the resolved language key if it differs
+          const resolvedCacheKey = createTranscriptCacheKey(reference, record.language);
 
-      const response = await getTranscriptLookupResponse(
-        upstream,
-        reference,
-        policy
-      );
-      const transcriptLanguageCatalog = getTranscriptLanguageCatalog(
-        response,
-        reference,
-        requestedLanguage
-      );
-      const record = await getTranscriptRecord(
-        response,
-        reference,
-        {
-          requestedLanguage,
-          includeTimestamps,
-          languageCatalog: transcriptLanguageCatalog,
-          logger,
-          policy,
-          transcriptFallback
-        }
-      );
-      const resolvedCacheKey = createTranscriptCacheKey(reference, record.language);
-      const cachedRecord = youtubeCache.setLookup(
-        resolvedCacheKey,
-        applyTranscriptFormat(record, false),
+          if (resolvedCacheKey !== cacheKey) {
+            youtubeCache.setLookup(resolvedCacheKey, formatted, TRANSCRIPT_TTL_MS);
+          }
+
+          return formatted;
+        },
         TRANSCRIPT_TTL_MS
       );
 
-      if (resolvedCacheKey !== cacheKey) {
-        youtubeCache.setLookup(cacheKey, cachedRecord, TRANSCRIPT_TTL_MS);
-      }
-
-      return applyTranscriptFormat(cachedRecord, includeTimestamps);
+      return applyTranscriptFormat(baseRecord, includeTimestamps);
     },
     getComments: async (query: YouTubeCommentQuery): Promise<YouTubeCommentPage> => {
       if (query.pageToken) {
@@ -492,58 +463,50 @@ export function createYouTubeService(
       const maxResults = query.maxResults ?? DEFAULT_COMMENT_RESULTS;
       const reference = expectReferenceKind(query.video!, parser, "video");
       const cacheKey = `comment:${reference.id}:sort=${sortBy}:max=${maxResults}`;
-      const cached = youtubeCache.getLookup<YouTubeCommentPage>(cacheKey);
 
-      if (cached) {
-        logger.debug("youtube comment cache hit", {
+      return youtubeCache.getOrFetch<YouTubeCommentPage>(cacheKey, async () => {
+        const upstream = await client.getClient();
+
+        logger.debug("fetching youtube comments", {
           id: reference.id,
           sortBy,
           maxResults
         });
-        return cached;
-      }
 
-      const upstream = await client.getClient();
-
-      logger.debug("fetching youtube comments", {
-        id: reference.id,
-        sortBy,
-        maxResults
-      });
-
-      const response = await policy.execute(
-        async () => {
-          try {
-            return await upstream.getComments(reference.id, SORT_MAP[sortBy]);
-          } catch (err) {
-            if (isCommentsDisabledError(err)) {
-              throw new NotAvailableError(
-                "Comments are disabled for this video.",
-                { cause: "comments_disabled" }
-              );
+        const response = await policy.execute(
+          async () => {
+            try {
+              return await upstream.getComments(reference.id, SORT_MAP[sortBy]);
+            } catch (err) {
+              if (isCommentsDisabledError(err)) {
+                throw new NotAvailableError(
+                  "Comments are disabled for this video.",
+                  { cause: "comments_disabled" }
+                );
+              }
+              throw err;
             }
-            throw err;
+          },
+          {
+            label: "comment lookup",
+            target: reference.id
           }
-        },
-        {
-          label: "comment lookup",
-          target: reference.id
+        );
+
+        const record = normalizeCommentPage(response, reference, { sortBy, maxResults });
+
+        if (asRecord(response)?.has_continuation) {
+          const token = createContinuationToken();
+          youtubeCache.setContinuation(token, {
+            videoId: reference.id,
+            sortBy,
+            response: response as CommentsLike
+          });
+          record.nextPageToken = token;
         }
-      );
 
-      const record = normalizeCommentPage(response, reference, { sortBy, maxResults });
-
-      if (asRecord(response)?.has_continuation) {
-        const token = createContinuationToken();
-        youtubeCache.setContinuation(token, {
-          videoId: reference.id,
-          sortBy,
-          response: response as CommentsLike
-        });
-        record.nextPageToken = token;
-      }
-
-      return youtubeCache.setLookup(cacheKey, record, COMMENT_TTL_MS);
+        return record;
+      }, COMMENT_TTL_MS);
     }
   };
 }
