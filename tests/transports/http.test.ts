@@ -1,15 +1,18 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { describe, expect, it, vi } from "vitest";
+import http from "node:http";
+import { describe, expect, it, vi, afterEach } from "vitest";
 
 import { createLogger } from "../../src/lib/logger.js";
 import { createServer } from "../../src/server/create-server.js";
 import {
   createStreamableHttpRuntime,
+  startHttpServer,
   type StreamableHttpTransport
 } from "../../src/transports/http.js";
 import { createSuccessResult } from "../../src/contracts/tool-result.js";
 import { SERVER_INFO } from "../../src/server/create-server.js";
+import { createRateLimiter } from "../../src/transports/rate-limiter.js";
 
 function createInitializeRequest() {
   return {
@@ -244,5 +247,104 @@ describe("hosted HTTP runtime", () => {
 
     expect(runtime.listSessionIds()).toEqual([]);
     expect(runtime.hasSession("missing-session")).toBe(false);
+  });
+});
+
+function httpGet(url: string): Promise<{ statusCode: number; body: string; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    http.get(url, res => {
+      const chunks: Buffer[] = [];
+      res.on("data", chunk => chunks.push(chunk));
+      res.on("end", () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+          headers: res.headers
+        });
+      });
+    }).on("error", reject);
+  });
+}
+
+function httpPost(url: string): Promise<{ statusCode: number; body: string; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method: "POST" }, res => {
+      const chunks: Buffer[] = [];
+      res.on("data", chunk => chunks.push(chunk));
+      res.on("end", () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+          headers: res.headers
+        });
+      });
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }));
+  });
+}
+
+describe("HTTP server health check and rate limiting", () => {
+  let serverHandle: Awaited<ReturnType<typeof startHttpServer>> | undefined;
+
+  afterEach(async () => {
+    if (serverHandle) {
+      await serverHandle.close();
+      serverHandle = undefined;
+    }
+  });
+
+  it("GET /health returns 200 with status ok and uptime number", async () => {
+    serverHandle = await startHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      logger: createLogger({ sink: () => {} })
+    });
+    const baseUrl = serverHandle.url.replace(/\/mcp$/, "");
+    const res = await httpGet(`${baseUrl}/health`);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.status).toBe("ok");
+    expect(typeof parsed.uptime).toBe("number");
+  });
+
+  it("GET /health is not affected by rate limiting", async () => {
+    const limiter = createRateLimiter({ maxRequests: 1 });
+    serverHandle = await startHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      rateLimiter: limiter,
+      logger: createLogger({ sink: () => {} })
+    });
+    const baseUrl = serverHandle.url.replace(/\/mcp$/, "");
+
+    // Exhaust rate limit with a request to /mcp
+    await httpPost(serverHandle.url);
+
+    // Health check should still work
+    const healthRes = await httpGet(`${baseUrl}/health`);
+    expect(healthRes.statusCode).toBe(200);
+    expect(JSON.parse(healthRes.body).status).toBe("ok");
+  });
+
+  it("requests to /mcp after rate limit breach return 429 with retry-after header", async () => {
+    const limiter = createRateLimiter({ maxRequests: 1 });
+    serverHandle = await startHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      rateLimiter: limiter,
+      logger: createLogger({ sink: () => {} })
+    });
+
+    // First request consumes the limit
+    await httpPost(serverHandle.url);
+
+    // Second request should be rate limited
+    const res = await httpPost(serverHandle.url);
+    expect(res.statusCode).toBe(429);
+    expect(res.headers["retry-after"]).toBeDefined();
+    const parsed = JSON.parse(res.body);
+    expect(parsed.error.message).toBe("Rate limit exceeded.");
   });
 });

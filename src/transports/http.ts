@@ -15,6 +15,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createLogger, type Logger } from "../lib/logger.js";
 import { createServer } from "../server/create-server.js";
 import type { ServerFactory } from "./stdio.js";
+import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 
 type HttpSession = {
   server: McpServer;
@@ -60,6 +61,7 @@ export type StartHttpServerOptions = StreamableHttpRuntimeOptions & {
   host?: string;
   port?: number;
   path?: string;
+  rateLimiter?: RateLimiter;
 };
 
 export type HostedHttpServer = {
@@ -277,7 +279,38 @@ export async function startHttpServer(
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 0;
   const path = options.path ?? "/mcp";
+  const startTime = Date.now();
+  const rateLimiter = options.rateLimiter ?? createRateLimiter();
   const server = createNodeHttpServer((req, res) => {
+    // Health check -- responds before MCP processing and is not rate limited
+    if (req.method === "GET" && getRequestPath(req) === "/health") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        status: "ok",
+        uptime: Math.floor((Date.now() - startTime) / 1000)
+      }));
+      return;
+    }
+
+    // Rate limiting -- HTTP transport only, skip /health
+    const clientIp = readHeader(req, "fly-client-ip")
+      ?? readHeader(req, "x-forwarded-for")?.split(",")[0]?.trim()
+      ?? req.socket.remoteAddress
+      ?? "unknown";
+    const rateResult = rateLimiter.check(clientIp);
+    if (!rateResult.allowed) {
+      res.statusCode = 429;
+      res.setHeader("retry-after", String(rateResult.retryAfterSeconds));
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Rate limit exceeded." },
+        id: null
+      }));
+      return;
+    }
+
     if (getRequestPath(req) !== path) {
       writeJsonRpcError(res, 404, -32004, "Endpoint not found.");
       return;

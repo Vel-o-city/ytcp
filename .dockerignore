@@ -1,0 +1,11 @@
+node_modules
+.git
+.planning
+tests
+scripts
+docs
+*.md
+.env*
+build
+.claude
+.agents
