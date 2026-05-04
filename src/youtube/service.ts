@@ -273,6 +273,7 @@ export function createYouTubeService(
         );
 
         const channelResponse = asRecord(response);
+        const record = normalizeChannelRecord(response, reference);
         let recentVideos: import("./contracts.js").YouTubeChannelVideoItem[] = [];
 
         if (channelResponse?.has_videos === true && typeof channelResponse.getVideos === "function") {
@@ -282,25 +283,48 @@ export function createYouTubeService(
             const getVideos = channelResponse.getVideos as () => Promise<unknown>;
             const videosResponse = await policy.execute(
               () => getVideos(),
-              {
-              label: "channel videos lookup",
-              target
-            }
-          );
-
-          recentVideos = extractChannelVideos(videosResponse);
-        } catch (videosError) {
-          logger.warn("channel recent-videos lookup failed, returning metadata without videos", {
-            target,
-            error: videosError instanceof Error ? videosError.message : String(videosError)
-          });
-          // Degrade gracefully: return channel metadata with empty recentVideos
-          // rather than failing the entire channel surface
-          recentVideos = [];
+              { label: "channel videos lookup", target }
+            );
+            recentVideos = extractChannelVideos(videosResponse);
+          } catch (videosError) {
+            logger.warn("channel recent-videos lookup failed, trying search fallback", {
+              target,
+              error: videosError instanceof Error ? videosError.message : String(videosError)
+            });
+          }
         }
-      }
 
-        const record = normalizeChannelRecord(response, reference);
+        if (recentVideos.length === 0 && record.title) {
+          logger.debug("using search fallback for channel recent videos", { target, channelTitle: record.title });
+          try {
+            const searchResponse = await policy.execute(
+              () => upstream.search(record.title!, toInnertubeSearchFilters({ sortBy: "upload_date" })),
+              { label: "channel videos search fallback", target }
+            );
+            const searchPage = normalizeSearchPage(searchResponse, {
+              query: record.title!,
+              maxResults: 10,
+              filters: { sortBy: "upload_date" }
+            });
+            recentVideos = searchPage.results
+              .filter(r => !record.id || r.channelId === record.id)
+              .map(r => ({
+                id: r.id,
+                canonicalUrl: r.canonicalUrl,
+                title: r.title,
+                thumbnails: r.thumbnails,
+                ...(r.publishedText ? { publishedText: r.publishedText } : {}),
+                ...(r.durationText ? { durationText: r.durationText } : {}),
+                ...(r.viewCountText ? { viewCountText: r.viewCountText } : {})
+              }));
+          } catch (searchError) {
+            logger.warn("search fallback for channel recent videos also failed", {
+              target,
+              error: searchError instanceof Error ? searchError.message : String(searchError)
+            });
+          }
+        }
+
         return { ...record, recentVideos };
       });
     },
