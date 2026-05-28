@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" role="img" aria-label="Transcript request lifecycle">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#141a23"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff003c"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <pattern id="dot" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#1f2733"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6e7681"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950"/>
+    </marker>
+    <marker id="arrowYellow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff9d3c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="560" fill="url(#bg)"/>
+  <rect width="1200" height="560" fill="url(#dot)" opacity="0.6"/>
+
+  <!-- Header -->
+  <text x="60" y="56" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="26" fill="#ffffff">Request lifecycle</text>
+  <text x="60" y="82" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#8b949e">A `get_transcript` call — fast on the happy path, resilient when InnerTube&apos;s primary endpoint refuses.</text>
+  <rect x="60" y="92" width="60" height="3" rx="1" fill="url(#accent)"/>
+
+  <!-- Step 1: incoming MCP call -->
+  <g transform="translate(60, 130)">
+    <rect width="220" height="80" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <rect x="0" y="0" width="220" height="80" rx="12" fill="url(#accent)" opacity="0.06"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">STEP 01  ·  REQUEST</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">MCP tool call</text>
+    <text x="16" y="62" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#8b949e">get_transcript({ video,</text>
+    <text x="16" y="74" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#8b949e">language: &quot;en&quot; })</text>
+  </g>
+
+  <!-- Arrow 1 → 2 -->
+  <line x1="280" y1="170" x2="320" y2="170" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Step 2: parse -->
+  <g transform="translate(320, 130)">
+    <rect width="200" height="80" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">STEP 02  ·  PARSE</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">Zod + URL parser</text>
+    <text x="16" y="62" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">Validate shape, resolve to</text>
+    <text x="16" y="74" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">typed VideoReference.</text>
+  </g>
+
+  <!-- Arrow 2 → 3 -->
+  <line x1="520" y1="170" x2="560" y2="170" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Step 3: cache decision -->
+  <g transform="translate(560, 130)">
+    <polygon points="0,40 60,0 200,0 260,40 200,80 60,80" fill="#0d1117" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="130" y="36" text-anchor="middle" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#a78bfa">STEP 03  ·  CACHE</text>
+    <text x="130" y="56" text-anchor="middle" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">Coalescing lookup</text>
+  </g>
+
+  <!-- HIT path (top) -->
+  <g>
+    <text x="850" y="155" font-family="ui-monospace, SF Mono, monospace" font-size="10" font-weight="700" fill="#3fb950">HIT</text>
+    <line x1="820" y1="170" x2="900" y2="170" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+    <g transform="translate(900, 130)">
+      <rect width="240" height="80" rx="12" fill="#0d1117" stroke="#3fb950" stroke-opacity="0.5"/>
+      <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#3fb950">FAST PATH</text>
+      <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">Return cached record</text>
+      <text x="16" y="64" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">24h TTL · zero network ·</text>
+      <text x="16" y="77" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">in-flight dedup if pending.</text>
+    </g>
+  </g>
+
+  <!-- Down arrow from cache decision (MISS) -->
+  <line x1="690" y1="210" x2="690" y2="246" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="700" y="232" font-family="ui-monospace, SF Mono, monospace" font-size="10" font-weight="700" fill="#8b949e">MISS</text>
+
+  <!-- Step 4: primary InnerTube -->
+  <g transform="translate(560, 250)">
+    <rect width="260" height="100" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <rect x="0" y="0" width="4" height="100" rx="2" fill="#58a6ff"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">STEP 04  ·  PRIMARY</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">InnerTube · getInfo</text>
+    <text x="16" y="64" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">youtubei.js → transcript</text>
+    <text x="16" y="78" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">engagement panel · language pick.</text>
+    <text x="16" y="92" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">retry · backoff · normalize</text>
+  </g>
+
+  <!-- branch right: success -->
+  <line x1="820" y1="300" x2="900" y2="300" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+  <text x="828" y="290" font-family="ui-monospace, SF Mono, monospace" font-size="10" font-weight="700" fill="#3fb950">OK</text>
+
+  <g transform="translate(900, 256)">
+    <rect width="240" height="88" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">STEP 05  ·  EMIT</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">Normalize + cache</text>
+    <text x="16" y="64" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">Build TranscriptRecord,</text>
+    <text x="16" y="78" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">cache by lang, return.</text>
+  </g>
+
+  <!-- branch down: primary failed -->
+  <line x1="690" y1="350" x2="690" y2="386" stroke="#ff9d3c" stroke-width="1.5" marker-end="url(#arrowYellow)"/>
+  <text x="700" y="372" font-family="ui-monospace, SF Mono, monospace" font-size="10" font-weight="700" fill="#ff9d3c">PRIMARY FAILED</text>
+
+  <!-- Step 6: fallback -->
+  <g transform="translate(560, 390)">
+    <rect width="260" height="100" rx="12" fill="#0d1117" stroke="#ff9d3c" stroke-opacity="0.4"/>
+    <rect x="0" y="0" width="4" height="100" rx="2" fill="#ff9d3c"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#ff9d3c">STEP 06  ·  FALLBACK</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">InnerTube · /player</text>
+    <text x="16" y="64" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">Direct caption-track route,</text>
+    <text x="16" y="78" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">XML → segments, same shape.</text>
+    <text x="16" y="92" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">retrievalMethod = &quot;fallback&quot;</text>
+  </g>
+
+  <!-- Fallback success path → reuse step 5 -->
+  <path d="M 820 440 Q 870 440 870 380 L 870 332" fill="none" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+  <text x="828" y="430" font-family="ui-monospace, SF Mono, monospace" font-size="10" font-weight="700" fill="#3fb950">OK</text>
+
+  <!-- Side annotations: typed errors -->
+  <g transform="translate(60, 252)">
+    <rect width="460" height="120" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">ERROR MODEL</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">Typed, classified, propagated</text>
+
+    <g font-family="ui-monospace, SF Mono, monospace" font-size="11">
+      <g transform="translate(16, 62)">
+        <circle cx="4" cy="-4" r="3" fill="#ff003c"/>
+        <text x="16" y="0" fill="#c9d1d9">InvalidInputError</text>
+        <text x="160" y="0" fill="#6e7681">→ never falls back</text>
+      </g>
+      <g transform="translate(16, 80)">
+        <circle cx="4" cy="-4" r="3" fill="#ff9d3c"/>
+        <text x="16" y="0" fill="#c9d1d9">UpstreamUnavailableError</text>
+        <text x="220" y="0" fill="#6e7681">→ triggers fallback</text>
+      </g>
+      <g transform="translate(16, 98)">
+        <circle cx="4" cy="-4" r="3" fill="#58a6ff"/>
+        <text x="16" y="0" fill="#c9d1d9">NotAvailableError</text>
+        <text x="160" y="0" fill="#6e7681">→ classified by cause</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Side annotation: caching -->
+  <g transform="translate(60, 390)">
+    <rect width="460" height="100" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <text x="16" y="22" font-family="ui-monospace, SF Mono, monospace" font-size="10" fill="#6e7681">CACHE STRATEGY</text>
+    <text x="16" y="44" font-family="system-ui, sans-serif" font-weight="700" font-size="14" fill="#e6edf3">Per-resource TTLs &amp; coalescing</text>
+
+    <g font-family="ui-monospace, SF Mono, monospace" font-size="11">
+      <text x="16" y="64" fill="#c9d1d9">transcript<tspan fill="#6e7681">  ·  24h</tspan></text>
+      <text x="170" y="64" fill="#c9d1d9">search<tspan fill="#6e7681">  ·  2m</tspan></text>
+      <text x="290" y="64" fill="#c9d1d9">playlist<tspan fill="#6e7681">  ·  2m</tspan></text>
+      <text x="16" y="82" fill="#c9d1d9">video<tspan fill="#6e7681">  ·  default</tspan></text>
+      <text x="170" y="82" fill="#c9d1d9">channel<tspan fill="#6e7681">  ·  default</tspan></text>
+      <text x="290" y="82" fill="#c9d1d9">comments<tspan fill="#6e7681">  ·  2m</tspan></text>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <text x="600" y="528" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#6e7681">
+    Same shape on success, success-after-fallback, and from-cache  ·  callers never branch on transport.
+  </text>
+</svg>
